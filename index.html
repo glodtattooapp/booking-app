@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Toni Agost">
 <meta name="theme-color" content="#EAE7DF">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
 <title>Toni Agost, Requests</title>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-auth-compat.js"></script>
@@ -106,6 +108,13 @@
     letter-spacing:0.04em; color:var(--ink); background:transparent; border:1px solid var(--line);
     padding:7px 10px; margin-left:auto;
   }
+  .search-input{
+    font-family:'IBM Plex Mono',monospace; font-size:12.5px;
+    color:var(--ink); background:transparent; border:1px solid var(--line);
+    padding:7px 10px; flex:1; max-width:220px; outline:none;
+  }
+  .search-input:focus{ border-color:var(--ink); }
+  .search-input::placeholder{ color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; font-size:11px; }
 
   /* ---------- Request list ---------- */
   .empty-state{
@@ -184,8 +193,8 @@
 
   .attachment-block{ margin-bottom:22px; }
   .attachment-img{
-    max-width:100%; max-height:260px; display:block;
-    border:1px solid var(--line); cursor:pointer;
+    max-width:140px; max-height:140px; display:block;
+    border:1px solid var(--line); cursor:pointer; object-fit:cover;
   }
   .attachment-fallback{
     font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink);
@@ -346,6 +355,7 @@
 
       <div class="filter-row" id="statusFilters"></div>
       <div class="filter-row">
+        <input type="text" id="searchInput" placeholder="Search by name…" class="search-input">
         <select class="city-filter" id="cityFilter">
           <option value="">All cities</option>
           <option>Reykjavík</option>
@@ -469,6 +479,7 @@ const STATUSES = ['New','Contacted','Booked','Declined'];
 let requests = [];
 let activeStatus = '';
 let activeCity = '';
+let activeSearch = '';
 let activeReqId = null;
 
 function startListening(){
@@ -489,8 +500,8 @@ function startListening(){
           idea: d.idea || '',
           notes: d.notes || '',
           status: d.status || 'New',
-          attachmentPath: d.attachmentPath || '',
-          attachmentName: d.attachmentName || '',
+          attachmentPaths: d.attachmentPaths || (d.attachmentPath ? [d.attachmentPath] : []),
+          attachmentNames: d.attachmentNames || (d.attachmentName ? [d.attachmentName] : []),
           createdAt: d.createdAt ? d.createdAt.toMillis() : Date.now()
         };
       });
@@ -561,13 +572,17 @@ function renderList(){
   let list = requests.slice().sort((a,b) => b.createdAt - a.createdAt);
   if(activeStatus) list = list.filter(r => r.status === activeStatus);
   if(activeCity) list = list.filter(r => r.city === activeCity);
+  if(activeSearch){
+    const q = activeSearch.toLowerCase();
+    list = list.filter(r => (r.first + ' ' + r.last).toLowerCase().includes(q));
+  }
 
   const container = document.getElementById('requestList');
   if(list.length === 0){
     container.innerHTML = `
       <div class="empty-state">
         <span class="accent">Nothing here yet.</span>
-        Requests you add, or log manually, will show up in this view.
+        ${activeSearch ? 'No requests match that name.' : 'Requests you add, or log manually, will show up in this view.'}
       </div>`;
     return;
   }
@@ -588,6 +603,11 @@ function renderList(){
 
 document.getElementById('cityFilter').addEventListener('change', (e) => {
   activeCity = e.target.value;
+  renderList();
+});
+
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  activeSearch = e.target.value;
   renderList();
 });
 
@@ -620,10 +640,12 @@ function openModal(id){
       <div class="detail-item full"><div class="k">Tattoo idea</div><div class="v">${r.idea || 'n/a'}</div></div>
     </div>
 
-    ${r.attachmentPath ? `
+    ${r.attachmentPaths && r.attachmentPaths.length ? `
     <div class="attachment-block">
-      <div class="k" style="font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:8px;">Attached reference</div>
-      <div id="attachmentSlot" style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);">Loading image…</div>
+      <div class="k" style="font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:8px;">Attached reference${r.attachmentPaths.length > 1 ? 's' : ''} (${r.attachmentPaths.length})</div>
+      <div id="attachmentGrid" style="display:flex; flex-wrap:wrap; gap:10px;">
+        ${r.attachmentPaths.map((p, i) => `<div id="attachmentSlot${i}" style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);">Loading…</div>`).join('')}
+      </div>
     </div>` : ''}
 
     <div class="notes-label">Notes</div>
@@ -661,17 +683,20 @@ function openModal(id){
 
   document.getElementById('closeModal').addEventListener('click', closeModal);
 
-  if(r.attachmentPath){
-    storage.ref(r.attachmentPath).getDownloadURL().then(url => {
-      const slot = document.getElementById('attachmentSlot');
-      if(!slot) return;
-      slot.innerHTML = `
-        <a href="${url}" target="_blank" rel="noopener">
-          <img src="${url}" alt="${r.attachmentName || 'Attachment'}" class="attachment-img">
-        </a>`;
-    }).catch(() => {
-      const slot = document.getElementById('attachmentSlot');
-      if(slot) slot.textContent = 'Could not load attachment.';
+  if(r.attachmentPaths && r.attachmentPaths.length){
+    r.attachmentPaths.forEach((path, i) => {
+      const name = (r.attachmentNames && r.attachmentNames[i]) || 'Attachment';
+      storage.ref(path).getDownloadURL().then(url => {
+        const slot = document.getElementById('attachmentSlot' + i);
+        if(!slot) return;
+        slot.outerHTML = `
+          <a id="attachmentSlot${i}" href="${url}" target="_blank" rel="noopener">
+            <img src="${url}" alt="${name}" class="attachment-img">
+          </a>`;
+      }).catch(() => {
+        const slot = document.getElementById('attachmentSlot' + i);
+        if(slot) slot.textContent = 'Could not load ' + name;
+      });
     });
   }
   document.getElementById('modalBackdrop').classList.add('show');

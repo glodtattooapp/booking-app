@@ -313,7 +313,7 @@
 
 <div id="loginGate">
   <div class="login-box">
-    <div class="login-eyebrow">Toni Agost</div>
+    <div class="login-eyebrow">Requests</div>
     <div class="login-title">Sign in</div>
     <form id="loginForm">
       <div class="login-field">
@@ -461,13 +461,26 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
 });
 
 let unsubscribeRequests = null;
+let currentOwner = null;
+
+const DISPLAY_NAMES = {
+  'bookings@toniagost.com': 'Toni Agost',
+  'elise.allison16@gmail.com': "Elise's Poked Pieces"
+};
 
 auth.onAuthStateChanged(user => {
   if(user){
+    currentOwner = user.email;
+    const displayName = DISPLAY_NAMES[currentOwner] || currentOwner;
+    document.querySelectorAll('.brand').forEach(el => {
+      el.innerHTML = displayName + ' <span class="accent-dot">·</span> Requests';
+    });
+    document.title = displayName + ', Requests';
     document.getElementById('loginGate').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     startListening();
   } else {
+    currentOwner = null;
     document.getElementById('loginGate').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
     if(unsubscribeRequests){ unsubscribeRequests(); unsubscribeRequests = null; }
@@ -483,7 +496,9 @@ let activeSearch = '';
 let activeReqId = null;
 
 function startListening(){
-  unsubscribeRequests = db.collection('requests').orderBy('createdAt','desc')
+  unsubscribeRequests = db.collection('requests')
+    .where('owner', '==', currentOwner)
+    .orderBy('createdAt','desc')
     .onSnapshot(snapshot => {
       requests = snapshot.docs.map(doc => {
         const d = doc.data();
@@ -491,12 +506,20 @@ function startListening(){
           id: doc.id,
           first: d.first || '',
           last: d.last || '',
-          city: d.city || '',
+          city: d.city || d.location || '',
+          address: d.address || '',
           email: d.email || '',
           phone: d.phone || '',
+          pronouns: d.pronouns || '',
           instagram: d.instagram || '',
+          age: d.age || '',
+          tattooCount: d.tattooCount || '',
           month: d.month || '',
+          size: d.size || '',
+          placement: d.placement || '',
+          foundVia: d.foundVia || '',
           budget: d.budget || '',
+          availability: d.availability || '',
           idea: d.idea || '',
           notes: d.notes || '',
           status: d.status || 'New',
@@ -515,7 +538,7 @@ function startListening(){
       showToast('Could not load requests');
     });
 
-  db.collection('settings').doc('calendar').get().then(doc => {
+  db.collection('settings').doc(currentOwner).get().then(doc => {
     if(doc.exists && doc.data().url){
       const url = doc.data().url;
       document.getElementById('calUrlInput').value = url;
@@ -617,6 +640,22 @@ function openModal(id){
   const r = requests.find(x => x.id === id);
   if(!r) return;
 
+  const detailFields = [
+    ['Email', r.email],
+    ['Phone', r.phone],
+    ['Pronouns', r.pronouns],
+    ['Instagram', r.instagram],
+    ['Age', r.age],
+    ['Address', r.address],
+    ['Number of tattoos', r.tattooCount],
+    ['Preferred month', r.month],
+    ['Size', r.size],
+    ['Placement', r.placement],
+    ['Found via', r.foundVia],
+    ['Budget', r.budget],
+    ['Availability', r.availability]
+  ].filter(([, v]) => v);
+
   const modal = document.getElementById('modalContent');
   modal.innerHTML = `
     <div class="modal-head">
@@ -632,11 +671,7 @@ function openModal(id){
     </div>
 
     <div class="detail-grid">
-      <div class="detail-item"><div class="k">Email</div><div class="v">${r.email || 'n/a'}</div></div>
-      <div class="detail-item"><div class="k">Phone</div><div class="v">${r.phone || 'n/a'}</div></div>
-      <div class="detail-item"><div class="k">Instagram</div><div class="v">${r.instagram || 'n/a'}</div></div>
-      <div class="detail-item"><div class="k">Preferred month</div><div class="v">${r.month || 'n/a'}</div></div>
-      <div class="detail-item"><div class="k">Budget</div><div class="v">${r.budget || 'n/a'}</div></div>
+      ${detailFields.map(([label, value]) => `<div class="detail-item"><div class="k">${label}</div><div class="v">${value}</div></div>`).join('')}
       <div class="detail-item full"><div class="k">Tattoo idea</div><div class="v">${r.idea || 'n/a'}</div></div>
     </div>
 
@@ -725,6 +760,7 @@ document.getElementById('addForm').addEventListener('submit', (e) => {
     notes: document.getElementById('f_notes').value,
     status: 'New',
     source: 'manual',
+    owner: currentOwner,
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   };
   db.collection('requests').add(r).then(() => {
@@ -743,7 +779,7 @@ const calSetup = document.getElementById('calSetup');
 document.getElementById('calSaveBtn').addEventListener('click', () => {
   const url = calUrlInput.value.trim();
   if(!url) return;
-  db.collection('settings').doc('calendar').set({ url }).then(() => {
+  db.collection('settings').doc(currentOwner).set({ url }).then(() => {
     calIframe.src = url;
     calEmbed.style.display = 'block';
     showToast('Calendar connected');

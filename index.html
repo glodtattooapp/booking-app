@@ -265,6 +265,28 @@
   .cal-embed{ border:1px solid var(--ink); }
   .cal-embed iframe{ width:100%; height:600px; border:none; display:block; }
 
+  /* ---------- Accounting ---------- */
+  .month-total{
+    font-family:'Inter',sans-serif; font-weight:800; font-size:26px; line-height:1;
+  }
+  .month-card{
+    border:1px solid var(--line); background:var(--panel); padding:18px 20px; margin-bottom:14px;
+  }
+  .month-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
+  .month-name{
+    font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase;
+    letter-spacing:0.06em; color:var(--muted);
+  }
+  .month-count{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted);
+  }
+  .month-entries{ margin-top:10px; border-top:1px dashed var(--line); padding-top:10px; }
+  .month-entry{
+    display:flex; justify-content:space-between; font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px; padding:5px 0; color:var(--ink);
+  }
+  .month-entry .name{ color:var(--muted); }
+
   /* ---------- Toast ---------- */
   .toast{
     position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px);
@@ -344,6 +366,7 @@
       <button data-tab="requests" class="active">Requests</button>
       <button data-tab="add">Add</button>
       <button data-tab="calendar">Calendar</button>
+      <button data-tab="accounting">Accounting</button>
     </nav>
   </header>
 
@@ -359,9 +382,18 @@
         <select class="city-filter" id="cityFilter">
           <option value="">All cities</option>
           <option>Reykjavík</option>
-          <option>London</option>
-          <option>Berlin</option>
+          <option>Manchester</option>
+          <option>New York</option>
+          <option>LA</option>
           <option>Paris</option>
+          <option>Brighton</option>
+          <option>Berlin</option>
+          <option>Amsterdam</option>
+          <option>Copenhagen</option>
+          <option>Sydney</option>
+          <option>Melbourne</option>
+          <option>Tokyo</option>
+          <option>Seoul</option>
         </select>
       </div>
 
@@ -380,7 +412,7 @@
           <div class="form-field"><label>City</label>
             <select id="f_city" required>
               <option value="">Select…</option>
-              <option>Reykjavík</option><option>London</option><option>Berlin</option><option>Paris</option>
+              <option>Reykjavík</option><option>Manchester</option><option>New York</option><option>LA</option><option>Paris</option><option>Brighton</option><option>Berlin</option><option>Amsterdam</option><option>Copenhagen</option><option>Sydney</option><option>Melbourne</option><option>Tokyo</option><option>Seoul</option>
             </select>
           </div>
           <div class="form-field"><label>Instagram</label><input type="text" id="f_ig" placeholder="@handle"></div>
@@ -402,10 +434,9 @@
     <!-- CALENDAR TAB -->
     <section id="tab-calendar" style="display:none;">
       <div class="cal-setup" id="calSetup">
-        <span class="accent">See your Acuity bookings here too.</span>
-        Turn on Acuity's built in Google Calendar sync, then paste that calendar's embed link below.
+        <span class="accent">See your calendar here too.</span>
+        Connect any Google Calendar and its events will show up right here.
         <ol>
-          <li>In Acuity: Business Settings → Sync with other Calendars → connect Google Calendar.</li>
           <li>In Google Calendar: open that calendar's Settings → Integrate calendar → copy the "Embed code" src URL (or the Public URL).</li>
           <li>Paste it below.</li>
         </ol>
@@ -417,6 +448,11 @@
       <div class="cal-embed" id="calEmbed" style="display:none;">
         <iframe id="calIframe"></iframe>
       </div>
+    </section>
+
+    <!-- ACCOUNTING TAB -->
+    <section id="tab-accounting" style="display:none;">
+      <div id="accountingContent"></div>
     </section>
 
   </main>
@@ -522,6 +558,8 @@ function startListening(){
           availability: d.availability || '',
           idea: d.idea || '',
           notes: d.notes || '',
+          price: d.price || '',
+          priceMonth: d.priceMonth || '',
           status: d.status || 'New',
           attachmentPaths: d.attachmentPaths || (d.attachmentPath ? [d.attachmentPath] : []),
           attachmentNames: d.attachmentNames || (d.attachmentName ? [d.attachmentName] : []),
@@ -529,6 +567,7 @@ function startListening(){
         };
       });
       renderStats(); renderFilters(); renderList();
+      if(document.getElementById('tab-accounting').style.display !== 'none') renderAccounting();
       if(activeReqId){
         const still = requests.find(r => r.id === activeReqId);
         if(still) openModal(activeReqId); else closeModal();
@@ -683,12 +722,18 @@ function openModal(id){
       </div>
     </div>` : ''}
 
+    <div class="notes-label">Confirmed price</div>
+    <div class="row2" style="margin-bottom:22px;">
+      <input type="text" id="priceField" placeholder="e.g. €300" value="${r.price || ''}">
+      <input type="text" id="priceMonthField" placeholder="e.g. August 2026" value="${r.priceMonth || ''}">
+    </div>
+
     <div class="notes-label">Notes</div>
     <textarea class="notes" id="notesField">${r.notes || ''}</textarea>
 
     <div class="modal-footer">
       <button class="delete-link" id="deleteReq">Delete request</button>
-      <button class="save-btn" id="saveNotes">Save notes</button>
+      <button class="save-btn" id="saveNotes">Save</button>
     </div>
   `;
 
@@ -702,10 +747,12 @@ function openModal(id){
   });
 
   document.getElementById('saveNotes').addEventListener('click', () => {
-    const val = document.getElementById('notesField').value;
-    db.collection('requests').doc(id).update({ notes: val })
-      .then(() => showToast('Notes saved'))
-      .catch(() => showToast('Could not save notes'));
+    const notesVal = document.getElementById('notesField').value;
+    const priceVal = document.getElementById('priceField').value;
+    const priceMonthVal = document.getElementById('priceMonthField').value;
+    db.collection('requests').doc(id).update({ notes: notesVal, price: priceVal, priceMonth: priceMonthVal })
+      .then(() => showToast('Saved'))
+      .catch(() => showToast('Could not save'));
   });
 
   document.getElementById('deleteReq').addEventListener('click', () => {
@@ -786,12 +833,80 @@ document.getElementById('calSaveBtn').addEventListener('click', () => {
   }).catch(() => showToast('Could not save calendar link'));
 });
 
+/* ===================== Accounting ===================== */
+function renderAccounting(){
+  const container = document.getElementById('accountingContent');
+  const priced = requests.filter(r => r.price && r.price.trim());
+
+  if(priced.length === 0){
+    container.innerHTML = `
+      <div class="empty-state">
+        <span class="accent">Nothing here yet.</span>
+        Add a confirmed price to a request, and it'll show up here grouped by month.
+      </div>`;
+    return;
+  }
+
+  const groups = {};
+  priced.forEach(r => {
+    const key = (r.priceMonth && r.priceMonth.trim()) || 'No month set';
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  });
+
+  function parseAmount(str){
+    const match = str.replace(/,/g, '').match(/[\d]+(\.\d+)?/);
+    return match ? parseFloat(match[0]) : 0;
+  }
+  function currencySymbol(str){
+    const match = str.match(/[€£$]/);
+    return match ? match[0] : '';
+  }
+
+  const monthKeys = Object.keys(groups).sort((a, b) => {
+    const da = Date.parse(a + ' 1');
+    const db_ = Date.parse(b + ' 1');
+    if(isNaN(da) && isNaN(db_)) return a.localeCompare(b);
+    if(isNaN(da)) return 1;
+    if(isNaN(db_)) return -1;
+    return db_ - da;
+  });
+
+  container.innerHTML = monthKeys.map(month => {
+    const entries = groups[month];
+    let total = 0;
+    let symbol = '';
+    entries.forEach(r => {
+      total += parseAmount(r.price);
+      if(!symbol) symbol = currencySymbol(r.price);
+    });
+    return `
+      <div class="month-card">
+        <div class="month-head">
+          <span class="month-name">${month}</span>
+          <span class="month-count">${entries.length} booking${entries.length === 1 ? '' : 's'}</span>
+        </div>
+        <div class="month-total">${symbol}${total % 1 === 0 ? total : total.toFixed(2)}</div>
+        <div class="month-entries">
+          ${entries.map(r => `
+            <div class="month-entry">
+              <span class="name">${r.first} ${r.last}</span>
+              <span>${r.price}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 /* ===================== Tabs ===================== */
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  ['requests','add','calendar'].forEach(t => {
+  ['requests','add','calendar','accounting'].forEach(t => {
     document.getElementById('tab-' + t).style.display = (t === name) ? 'block' : 'none';
   });
+  if(name === 'accounting') renderAccounting();
 }
 document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));

@@ -330,6 +330,12 @@
     color:var(--ink); outline:none; margin-bottom:14px;
   }
   .pin-input:focus{ border-color:var(--ink); }
+  .pin-input-compact{
+    display:block; width:100%; max-width:280px; font-family:'IBM Plex Mono',monospace; font-size:14px;
+    text-align:left; letter-spacing:normal; padding:9px 10px; border:1px solid var(--line);
+    background:var(--panel); color:var(--ink); outline:none; margin-bottom:10px;
+  }
+  .pin-input-compact:focus{ border-color:var(--ink); }
   .pin-submit{
     width:100%; background:var(--ink); color:var(--paper); border:none;
     font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase;
@@ -1419,9 +1425,9 @@ function renderSettings(){
       <div class="tax-hint-inline" style="display:block; margin-bottom:10px;">
         ${accountingPin ? 'Confirm your current PIN to set a new one.' : 'Not set yet. Set one to lock your Accounting tab.'}
       </div>
-      ${accountingPin ? `<input type="password" inputmode="numeric" maxlength="8" id="currentPinInput" class="pin-input" placeholder="Current PIN" style="max-width:220px; margin-bottom:10px;">` : ''}
-      <input type="password" inputmode="numeric" maxlength="8" id="newPinInput" class="pin-input" placeholder="New PIN" style="max-width:220px; margin-bottom:10px;">
-      <input type="password" inputmode="numeric" maxlength="8" id="confirmPinInput" class="pin-input" placeholder="Confirm new PIN" style="max-width:220px; margin-bottom:10px;">
+      ${accountingPin ? `<input type="password" inputmode="numeric" maxlength="8" id="currentPinInput" class="pin-input-compact" placeholder="Current PIN">` : ''}
+      <input type="password" inputmode="numeric" maxlength="8" id="newPinInput" class="pin-input-compact" placeholder="New PIN">
+      <input type="password" inputmode="numeric" maxlength="8" id="confirmPinInput" class="pin-input-compact" placeholder="Confirm new PIN">
       <div id="pinSettingsError" style="display:none; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#B2453D; margin-bottom:10px;"></div>
       <button id="savePinSettingsBtn" class="save-btn-small">${accountingPin ? 'Change PIN' : 'Set PIN'}</button>
     </div>

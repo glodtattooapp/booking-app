@@ -377,6 +377,12 @@
   }
   .pin-controls{ display:flex; gap:16px; }
 
+  /* ---------- Settings ---------- */
+  .settings-block{
+    border-bottom:1px solid var(--line); padding-bottom:24px; margin-bottom:24px; max-width:440px;
+  }
+  .settings-block:last-child{ border-bottom:none; }
+
   /* ---------- Toast ---------- */
   .toast{
     position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px);
@@ -449,8 +455,6 @@
       <span class="brand">Glød <span class="accent-dot">·</span> Requests</span>
       <span>
         <span class="today-tag" id="todayTag"></span>
-        <button class="logout-link" id="changePasswordBtn">Change password</button>
-        <button class="logout-link" id="logoutBtn">Sign out</button>
       </span>
     </div>
     <nav class="tabs">
@@ -458,6 +462,7 @@
       <button data-tab="add">Add</button>
       <button data-tab="calendar">Calendar</button>
       <button data-tab="accounting">Accounting</button>
+      <button data-tab="settings">Settings</button>
     </nav>
   </header>
 
@@ -546,6 +551,11 @@
       <div id="accountingContent"></div>
     </section>
 
+    <!-- SETTINGS TAB -->
+    <section id="tab-settings" style="display:none;">
+      <div id="settingsContent"></div>
+    </section>
+
   </main>
 </div>
 
@@ -586,14 +596,6 @@ document.getElementById('loginForm').addEventListener('submit', (e) => {
   auth.signInWithEmailAndPassword(email, pass).catch(err => {
     errBox.textContent = 'Wrong email or password. Try again.';
   });
-});
-
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  auth.signOut();
-});
-
-document.getElementById('changePasswordBtn').addEventListener('click', () => {
-  openPasswordModal(false);
 });
 
 function openPasswordModal(forced){
@@ -714,6 +716,12 @@ let vatRate = 0;
 let otherRate = 0;
 let monthlyCredit = 0;
 let settingsLoaded = false;
+let businessName = '';
+let lastInvoiceNumber = 0;
+
+function getDisplayName(){
+  return businessName || DISPLAY_NAMES[currentOwner] || currentOwner;
+}
 
 function startListening(){
   unsubscribeRequests = db.collection('requests')
@@ -775,6 +783,15 @@ function startListening(){
       vatRate = data.vatRate || 0;
       otherRate = data.otherRate || 0;
       monthlyCredit = data.monthlyCredit || 0;
+      businessName = data.businessName || '';
+      lastInvoiceNumber = data.lastInvoiceNumber || 0;
+      if(businessName){
+        const displayName = getDisplayName();
+        document.querySelectorAll('.brand').forEach(el => {
+          el.innerHTML = displayName + ' <span class="accent-dot">·</span> Requests';
+        });
+        document.title = displayName + ', Requests';
+      }
       if(data.mustChangePassword){
         openPasswordModal(true);
       }
@@ -840,6 +857,14 @@ function grossAmountFor(r){
   const net = parseAmount(r.price);
   const vatPct = parseFloat(r.vatRate) || 0;
   return net * (1 + vatPct / 100);
+}
+function defaultInvoiceDescription(r){
+  const clean = s => s.trim().replace(/\.+$/, '');
+  const parts = [];
+  if(r.idea) parts.push(clean(r.idea));
+  if(r.placement) parts.push('Placement: ' + clean(r.placement));
+  if(r.size) parts.push('Size: ' + clean(r.size));
+  return parts.join('. ') || 'Tattoo appointment';
 }
 
 function renderList(){
@@ -951,6 +976,9 @@ function openModal(id){
     </div>
     <div class="charge-total" id="chargeTotal"></div>
 
+    <div class="notes-label">Invoice description</div>
+    <textarea class="notes" id="invoiceDescField" style="min-height:56px;">${r.invoiceDescription || defaultInvoiceDescription(r)}</textarea>
+
     <div class="notes-label">Notes</div>
     <textarea class="notes" id="notesField">${r.notes || ''}</textarea>
 
@@ -997,7 +1025,8 @@ function openModal(id){
     const priceVal = document.getElementById('priceField').value;
     const priceMonthVal = document.getElementById('priceMonthField').value;
     const vatVal = document.getElementById('priceVatField').value;
-    db.collection('requests').doc(id).update({ notes: notesVal, price: priceVal, priceMonth: priceMonthVal, vatRate: vatVal })
+    const invoiceDescVal = document.getElementById('invoiceDescField').value;
+    db.collection('requests').doc(id).update({ notes: notesVal, price: priceVal, priceMonth: priceMonthVal, vatRate: vatVal, invoiceDescription: invoiceDescVal })
       .then(() => showToast('Saved'))
       .catch(() => showToast('Could not save'));
   });
@@ -1005,11 +1034,21 @@ function openModal(id){
   document.getElementById('genInvoiceBtn').addEventListener('click', () => {
     const priceVal = document.getElementById('priceField').value.trim();
     const vatVal = document.getElementById('priceVatField').value.trim();
+    const descVal = document.getElementById('invoiceDescField').value.trim();
     if(!priceVal){
       showToast('Add a price first');
       return;
     }
-    openInvoice(r, priceVal, vatVal, id);
+    const btn = document.getElementById('genInvoiceBtn');
+    btn.disabled = true;
+    const nextNumber = (Number(lastInvoiceNumber) || 0) + 1;
+    db.collection('settings').doc(currentOwner).set({ lastInvoiceNumber: nextNumber }, { merge: true })
+      .then(() => {
+        lastInvoiceNumber = nextNumber;
+        openInvoice(r, priceVal, vatVal, descVal, nextNumber);
+      })
+      .catch(() => showToast('Could not generate invoice number'))
+      .finally(() => { btn.disabled = false; });
   });
 
   document.getElementById('deleteReq').addEventListener('click', () => {
@@ -1049,17 +1088,13 @@ document.getElementById('modalBackdrop').addEventListener('click', (e) => {
 });
 
 /* ===================== Invoice ===================== */
-function openInvoice(r, priceVal, vatVal, id){
-  const studioName = DISPLAY_NAMES[currentOwner] || currentOwner;
+function openInvoice(r, priceVal, vatVal, descVal, invoiceNumber){
+  const studioName = getDisplayName();
   const today = new Date();
   const dateStr = today.toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
-  const invoiceNo = 'INV-' + today.toISOString().slice(0,10).replace(/-/g,'') + '-' + id.slice(-4).toUpperCase();
+  const invoiceNo = 'INV-' + String(invoiceNumber).padStart(4, '0');
   const clientName = [r.first, r.last].filter(Boolean).join(' ') || 'Client';
-  const descriptionParts = [];
-  if(r.idea) descriptionParts.push(r.idea);
-  if(r.placement) descriptionParts.push('Placement: ' + r.placement);
-  if(r.size) descriptionParts.push('Size: ' + r.size);
-  const description = descriptionParts.join('. ') || 'Tattoo appointment';
+  const description = descVal || defaultInvoiceDescription(r);
 
   // The confirmed price is the price before VAT. VAT is added on top to get what to charge.
   const fmt = fmtAmount;
@@ -1075,6 +1110,7 @@ function openInvoice(r, priceVal, vatVal, id){
         <tr class="total-row"><td>Total</td><td class="amount-col">${symbol}${fmt(grossAmount)}</td></tr>
   ` : `
         <tr><td>${description}</td><td class="amount-col">${priceVal}</td></tr>
+
         <tr class="total-row"><td>Total</td><td class="amount-col">${priceVal}</td></tr>
   `;
 
@@ -1228,34 +1264,6 @@ function renderAccountingLock(container){
   document.getElementById('pinInput').focus();
 }
 
-function promptSetPin(){
-  const container = document.getElementById('accountingContent');
-  container.insertAdjacentHTML('afterbegin', `
-    <div class="pin-set-panel" id="pinSetPanel">
-      <div class="pin-gate-label">${accountingPin ? 'Change PIN' : 'Set a PIN'}</div>
-      <input type="password" inputmode="numeric" maxlength="8" id="newPinInput" class="pin-input" placeholder="New PIN">
-      <button id="savePinBtn" class="pin-submit">Save</button>
-      <div style="margin-top:10px; text-align:center;">
-        <button id="cancelPinBtn" class="link-btn">Cancel</button>
-      </div>
-    </div>
-  `);
-  document.getElementById('newPinInput').focus();
-  document.getElementById('savePinBtn').addEventListener('click', () => {
-    const val = document.getElementById('newPinInput').value.trim();
-    if(!val){ showToast('Enter a PIN first'); return; }
-    db.collection('settings').doc(currentOwner).set({ accountingPin: val }, { merge: true })
-      .then(() => {
-        accountingPin = val;
-        accountingUnlocked = true;
-        showToast('PIN saved');
-        renderAccounting();
-      })
-      .catch(() => showToast('Could not save PIN'));
-  });
-  document.getElementById('cancelPinBtn').addEventListener('click', () => renderAccounting());
-}
-
 function renderAccountingContent(container){
   const priced = requests.filter(r => r.price && r.price.trim());
   const setAsidePct = (Number(incomeTaxRate) || 0) + (Number(vatRate) || 0) + (Number(otherRate) || 0);
@@ -1280,10 +1288,7 @@ function renderAccountingContent(container){
         <button id="saveTaxBtn" class="save-btn-small">Save</button>
       </div>
       <div class="pin-controls">
-        ${accountingPin
-          ? `<button id="lockNowBtn" class="link-btn">Lock now</button><button id="changePinBtn" class="link-btn">Change PIN</button>`
-          : `<button id="setPinBtn" class="link-btn">Set a PIN</button>`
-        }
+        ${accountingPin ? `<button id="lockNowBtn" class="link-btn">Lock now</button>` : `<span class="tax-hint-inline">Set a PIN from the Settings tab to lock this.</span>`}
       </div>
     </div>
     <div class="tax-note">If your tax is based on brackets rather than one flat rate, use your effective rate (roughly what you actually end up paying overall), not your top bracket. A credit is a fixed amount taken off, not a percentage, so it only gets subtracted once per month, not per booking.</div>
@@ -1387,19 +1392,107 @@ function renderAccountingContent(container){
       accountingUnlocked = false;
       renderAccounting();
     });
-    document.getElementById('changePinBtn').addEventListener('click', promptSetPin);
-  } else {
-    document.getElementById('setPinBtn').addEventListener('click', promptSetPin);
   }
+}
+
+/* ===================== Settings ===================== */
+function renderSettings(){
+  const container = document.getElementById('settingsContent');
+  container.innerHTML = `
+    <div class="settings-block">
+      <div class="notes-label">Business name</div>
+      <div class="tax-hint-inline" style="display:block; margin-bottom:10px;">Shown in the header and on your invoices.</div>
+      <div class="price-row" style="grid-template-columns:1fr auto;">
+        <input type="text" id="businessNameInput" placeholder="${DISPLAY_NAMES[currentOwner] || currentOwner}" value="${businessName || ''}">
+        <button id="saveBusinessNameBtn" class="save-btn-small" style="height:fit-content;">Save</button>
+      </div>
+    </div>
+
+    <div class="settings-block">
+      <div class="notes-label">Password</div>
+      <div class="tax-hint-inline" style="display:block; margin-bottom:10px;">Confirm your current password to set a new one.</div>
+      <button id="openChangePasswordBtn" class="save-btn-small">Change password</button>
+    </div>
+
+    <div class="settings-block">
+      <div class="notes-label">Accounting PIN</div>
+      <div class="tax-hint-inline" style="display:block; margin-bottom:10px;">
+        ${accountingPin ? 'Confirm your current PIN to set a new one.' : 'Not set yet. Set one to lock your Accounting tab.'}
+      </div>
+      ${accountingPin ? `<input type="password" inputmode="numeric" maxlength="8" id="currentPinInput" class="pin-input" placeholder="Current PIN" style="max-width:220px; margin-bottom:10px;">` : ''}
+      <input type="password" inputmode="numeric" maxlength="8" id="newPinInput" class="pin-input" placeholder="New PIN" style="max-width:220px; margin-bottom:10px;">
+      <input type="password" inputmode="numeric" maxlength="8" id="confirmPinInput" class="pin-input" placeholder="Confirm new PIN" style="max-width:220px; margin-bottom:10px;">
+      <div id="pinSettingsError" style="display:none; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#B2453D; margin-bottom:10px;"></div>
+      <button id="savePinSettingsBtn" class="save-btn-small">${accountingPin ? 'Change PIN' : 'Set PIN'}</button>
+    </div>
+
+    <div class="settings-block">
+      <button id="settingsSignOutBtn" class="delete-link">Sign out</button>
+    </div>
+  `;
+
+  document.getElementById('saveBusinessNameBtn').addEventListener('click', () => {
+    const val = document.getElementById('businessNameInput').value.trim();
+    db.collection('settings').doc(currentOwner).set({ businessName: val }, { merge: true })
+      .then(() => {
+        businessName = val;
+        const displayName = getDisplayName();
+        document.querySelectorAll('.brand').forEach(el => {
+          el.innerHTML = displayName + ' <span class="accent-dot">·</span> Requests';
+        });
+        document.title = displayName + ', Requests';
+        showToast('Business name saved');
+      })
+      .catch(() => showToast('Could not save'));
+  });
+
+  document.getElementById('openChangePasswordBtn').addEventListener('click', () => openPasswordModal(false));
+
+  document.getElementById('savePinSettingsBtn').addEventListener('click', () => {
+    const errEl = document.getElementById('pinSettingsError');
+    errEl.style.display = 'none';
+    const currentVal = accountingPin ? document.getElementById('currentPinInput').value : '';
+    const newVal = document.getElementById('newPinInput').value.trim();
+    const confirmVal = document.getElementById('confirmPinInput').value.trim();
+
+    if(accountingPin && currentVal !== accountingPin){
+      errEl.textContent = 'Current PIN is incorrect.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if(!newVal){
+      errEl.textContent = 'Enter a new PIN.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if(newVal !== confirmVal){
+      errEl.textContent = 'New PINs do not match.';
+      errEl.style.display = 'block';
+      return;
+    }
+    db.collection('settings').doc(currentOwner).set({ accountingPin: newVal }, { merge: true })
+      .then(() => {
+        accountingPin = newVal;
+        accountingUnlocked = true;
+        showToast('PIN saved');
+        renderSettings();
+      })
+      .catch(() => showToast('Could not save PIN'));
+  });
+
+  document.getElementById('settingsSignOutBtn').addEventListener('click', () => {
+    auth.signOut();
+  });
 }
 
 /* ===================== Tabs ===================== */
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  ['requests','add','calendar','accounting'].forEach(t => {
+  ['requests','add','calendar','accounting','settings'].forEach(t => {
     document.getElementById('tab-' + t).style.display = (t === name) ? 'block' : 'none';
   });
   if(name === 'accounting') renderAccounting();
+  if(name === 'settings') renderSettings();
 }
 document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));

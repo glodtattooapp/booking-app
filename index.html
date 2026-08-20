@@ -166,6 +166,22 @@
 
   .modal-head{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px; }
   .modal-name{ font-family:'Inter',sans-serif; font-weight:800; font-size:24px; }
+  .price-row{ display:grid; grid-template-columns:1.3fr 1.3fr 0.8fr; gap:14px; margin-bottom:22px; }
+  @media (max-width:520px){ .price-row{ grid-template-columns:1fr; } }
+  .price-row input{
+    width:100%; font-family:'IBM Plex Mono',monospace; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); background:var(--panel); color:var(--ink); outline:none;
+  }
+  .price-row input:focus{ border-color:var(--ink); }
+  .price-row label{
+    display:block; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase;
+    letter-spacing:0.05em; color:var(--muted); margin-bottom:6px;
+  }
+  .charge-total{
+    font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--muted);
+    margin-top:-12px; margin-bottom:22px; min-height:1em;
+  }
+  .charge-total b{ color:var(--ink); font-weight:600; }
   .modal-close{
     background:none; border:1px solid var(--line); color:var(--muted); width:30px; height:30px;
     cursor:pointer; font-family:'IBM Plex Mono',monospace; font-size:14px; flex-shrink:0;
@@ -286,9 +302,17 @@
     font-size:12.5px; padding:5px 0; color:var(--ink);
   }
   .month-entry .name{ color:var(--muted); }
+  .vat-tag{ color:var(--muted); font-size:10.5px; }
   .month-setaside{
     font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--muted);
     margin-top:4px; margin-bottom:8px;
+  }
+  .currency-total-block{ margin-bottom:12px; }
+  .currency-total-block:last-of-type{ margin-bottom:0; }
+  .mixed-currency-note{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted);
+    background:var(--paper); border:1px dashed var(--line); padding:8px 10px;
+    margin-bottom:14px; line-height:1.5;
   }
 
   /* ---------- Accounting: PIN gate ---------- */
@@ -341,6 +365,11 @@
     padding:8px 10px; border:1px solid var(--line); background:var(--panel); color:var(--ink); outline:none;
   }
   .tax-row input:focus{ border-color:var(--ink); }
+  .tax-hint-inline{ text-transform:none; letter-spacing:0; font-size:9.5px; color:var(--muted); opacity:0.7; }
+  .tax-note{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.6; color:var(--muted);
+    margin-top:-10px; margin-bottom:24px; max-width:560px;
+  }
   .save-btn-small{
     background:var(--ink); color:var(--paper); border:none;
     font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase;
@@ -420,6 +449,7 @@
       <span class="brand">Glød <span class="accent-dot">·</span> Requests</span>
       <span>
         <span class="today-tag" id="todayTag"></span>
+        <button class="logout-link" id="changePasswordBtn">Change password</button>
         <button class="logout-link" id="logoutBtn">Sign out</button>
       </span>
     </div>
@@ -524,6 +554,11 @@
   <div class="modal" id="modalContent"></div>
 </div>
 
+<!-- Password Modal -->
+<div class="modal-backdrop" id="pwBackdrop">
+  <div class="modal" id="pwModalContent" style="max-width:380px;"></div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -556,6 +591,85 @@ document.getElementById('loginForm').addEventListener('submit', (e) => {
 document.getElementById('logoutBtn').addEventListener('click', () => {
   auth.signOut();
 });
+
+document.getElementById('changePasswordBtn').addEventListener('click', () => {
+  openPasswordModal(false);
+});
+
+function openPasswordModal(forced){
+  const content = document.getElementById('pwModalContent');
+  content.innerHTML = `
+    <div class="modal-head">
+      <div class="modal-name" style="font-size:18px;">${forced ? 'Set a new password' : 'Change password'}</div>
+      ${!forced ? '<button class="modal-close" id="pwClose">✕</button>' : ''}
+    </div>
+    ${forced ? `<p style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);line-height:1.6;margin:0 0 20px;">You're using a starter password. Set your own to continue.</p>` : ''}
+    <div class="field-row" style="padding:12px 0;">
+      <label class="title" style="font-size:12px;">Current password</label>
+      <input type="password" id="pwCurrent" autocomplete="current-password" style="width:100%;font-family:'IBM Plex Mono',monospace;font-size:14px;padding:9px 2px;border:none;border-bottom:1px solid var(--line);background:transparent;outline:none;">
+    </div>
+    <div class="field-row" style="padding:12px 0;">
+      <label class="title" style="font-size:12px;">New password</label>
+      <input type="password" id="pwNew" autocomplete="new-password" style="width:100%;font-family:'IBM Plex Mono',monospace;font-size:14px;padding:9px 2px;border:none;border-bottom:1px solid var(--line);background:transparent;outline:none;">
+    </div>
+    <div class="field-row" style="padding:12px 0;">
+      <label class="title" style="font-size:12px;">Confirm new password</label>
+      <input type="password" id="pwConfirm" autocomplete="new-password" style="width:100%;font-family:'IBM Plex Mono',monospace;font-size:14px;padding:9px 2px;border:none;border-bottom:1px solid var(--line);background:transparent;outline:none;">
+    </div>
+    <div id="pwError" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#B2453D;margin-bottom:10px;"></div>
+    <div class="modal-footer">
+      <span></span>
+      <button class="save-btn" id="pwSubmit">Save new password</button>
+    </div>
+  `;
+  document.getElementById('pwBackdrop').classList.add('show');
+  if(!forced){
+    document.getElementById('pwClose').addEventListener('click', closePasswordModal);
+  }
+  document.getElementById('pwSubmit').addEventListener('click', () => submitPasswordChange());
+  document.getElementById('pwConfirm').addEventListener('keydown', e => { if(e.key === 'Enter') submitPasswordChange(); });
+}
+
+function closePasswordModal(){
+  document.getElementById('pwBackdrop').classList.remove('show');
+}
+
+function submitPasswordChange(){
+  const current = document.getElementById('pwCurrent').value;
+  const next = document.getElementById('pwNew').value;
+  const confirmVal = document.getElementById('pwConfirm').value;
+  const errEl = document.getElementById('pwError');
+  errEl.style.display = 'none';
+
+  if(!current || !next || !confirmVal){
+    errEl.textContent = 'Fill in all fields.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if(next.length < 6){
+    errEl.textContent = 'New password should be at least 6 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if(next !== confirmVal){
+    errEl.textContent = 'New passwords do not match.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const credential = firebase.auth.EmailAuthProvider.credential(currentOwner, current);
+  auth.currentUser.reauthenticateWithCredential(credential)
+    .then(() => auth.currentUser.updatePassword(next))
+    .then(() => db.collection('settings').doc(currentOwner).set({ mustChangePassword: false }, { merge: true }))
+    .then(() => {
+      showToast('Password updated');
+      closePasswordModal();
+    })
+    .catch(err => {
+      errEl.textContent = (err && err.code === 'auth/wrong-password') ? 'Current password is incorrect.' : 'Could not update password.';
+      errEl.style.display = 'block';
+    });
+}
 
 let unsubscribeRequests = null;
 let currentOwner = null;
@@ -597,6 +711,8 @@ let accountingPin = '';
 let accountingUnlocked = false;
 let incomeTaxRate = 0;
 let vatRate = 0;
+let otherRate = 0;
+let monthlyCredit = 0;
 let settingsLoaded = false;
 
 function startListening(){
@@ -628,6 +744,7 @@ function startListening(){
           notes: d.notes || '',
           price: d.price || '',
           priceMonth: d.priceMonth || '',
+          vatRate: d.vatRate || '',
           status: d.status || 'New',
           attachmentPaths: d.attachmentPaths || (d.attachmentPath ? [d.attachmentPath] : []),
           attachmentNames: d.attachmentNames || (d.attachmentName ? [d.attachmentName] : []),
@@ -656,6 +773,11 @@ function startListening(){
       accountingPin = data.accountingPin || '';
       incomeTaxRate = data.incomeTaxRate || 0;
       vatRate = data.vatRate || 0;
+      otherRate = data.otherRate || 0;
+      monthlyCredit = data.monthlyCredit || 0;
+      if(data.mustChangePassword){
+        openPasswordModal(true);
+      }
     }
     settingsLoaded = true;
   });
@@ -702,6 +824,22 @@ function timeAgo(ts){
   const days = Math.floor(hrs/24);
   if(days < 30) return days + 'd ago';
   return new Date(ts).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+}
+
+/* ===================== Money helpers, shared ===================== */
+function parseAmount(str){
+  const match = String(str).replace(/,/g, '').match(/[\d]+(\.\d+)?/);
+  return match ? parseFloat(match[0]) : 0;
+}
+function currencySymbol(str){
+  const match = String(str).match(/€|£|\$|kr\.?/i);
+  return match ? match[0] : '';
+}
+function fmtAmount(n){ return n % 1 === 0 ? n : n.toFixed(2); }
+function grossAmountFor(r){
+  const net = parseAmount(r.price);
+  const vatPct = parseFloat(r.vatRate) || 0;
+  return net * (1 + vatPct / 100);
 }
 
 function renderList(){
@@ -796,18 +934,32 @@ function openModal(id){
       </div>
     </div>` : ''}
 
-    <div class="notes-label">Confirmed price</div>
-    <div class="row2" style="margin-bottom:22px;">
-      <input type="text" id="priceField" placeholder="e.g. €300" value="${r.price || ''}">
-      <input type="text" id="priceMonthField" placeholder="e.g. August 2026" value="${r.priceMonth || ''}">
+    <div class="notes-label">Confirmed price <span class="tax-hint-inline">before VAT</span></div>
+    <div class="price-row">
+      <div>
+        <label>Price</label>
+        <input type="text" id="priceField" placeholder="e.g. €300" value="${r.price || ''}">
+      </div>
+      <div>
+        <label>Month</label>
+        <input type="text" id="priceMonthField" placeholder="e.g. August 2026" value="${r.priceMonth || ''}">
+      </div>
+      <div>
+        <label>VAT %</label>
+        <input type="number" id="priceVatField" placeholder="0" min="0" max="100" step="0.1" value="${r.vatRate || ''}">
+      </div>
     </div>
+    <div class="charge-total" id="chargeTotal"></div>
 
     <div class="notes-label">Notes</div>
     <textarea class="notes" id="notesField">${r.notes || ''}</textarea>
 
     <div class="modal-footer">
       <button class="delete-link" id="deleteReq">Delete request</button>
-      <button class="save-btn" id="saveNotes">Save</button>
+      <div style="display:flex; gap:10px;">
+        <button class="save-btn" id="genInvoiceBtn" type="button" style="background:var(--panel); color:var(--ink); border:1px solid var(--ink);">Invoice</button>
+        <button class="save-btn" id="saveNotes">Save</button>
+      </div>
     </div>
   `;
 
@@ -820,13 +972,44 @@ function openModal(id){
     });
   });
 
+  function updateChargeTotal(){
+    const priceVal = document.getElementById('priceField').value.trim();
+    const vatVal = document.getElementById('priceVatField').value.trim();
+    const el = document.getElementById('chargeTotal');
+    if(!priceVal){ el.textContent = ''; return; }
+    const net = parseAmount(priceVal);
+    const symbol = currencySymbol(priceVal);
+    const vatPct = parseFloat(vatVal) || 0;
+    if(vatPct > 0){
+      const vatAmt = net * vatPct / 100;
+      const total = net + vatAmt;
+      el.innerHTML = `Charge the client <b>${symbol}${fmtAmount(total)}</b> (${symbol}${fmtAmount(net)} + ${fmtAmount(vatPct)}% VAT)`;
+    } else {
+      el.textContent = '';
+    }
+  }
+  updateChargeTotal();
+  document.getElementById('priceField').addEventListener('input', updateChargeTotal);
+  document.getElementById('priceVatField').addEventListener('input', updateChargeTotal);
+
   document.getElementById('saveNotes').addEventListener('click', () => {
     const notesVal = document.getElementById('notesField').value;
     const priceVal = document.getElementById('priceField').value;
     const priceMonthVal = document.getElementById('priceMonthField').value;
-    db.collection('requests').doc(id).update({ notes: notesVal, price: priceVal, priceMonth: priceMonthVal })
+    const vatVal = document.getElementById('priceVatField').value;
+    db.collection('requests').doc(id).update({ notes: notesVal, price: priceVal, priceMonth: priceMonthVal, vatRate: vatVal })
       .then(() => showToast('Saved'))
       .catch(() => showToast('Could not save'));
+  });
+
+  document.getElementById('genInvoiceBtn').addEventListener('click', () => {
+    const priceVal = document.getElementById('priceField').value.trim();
+    const vatVal = document.getElementById('priceVatField').value.trim();
+    if(!priceVal){
+      showToast('Add a price first');
+      return;
+    }
+    openInvoice(r, priceVal, vatVal, id);
   });
 
   document.getElementById('deleteReq').addEventListener('click', () => {
@@ -864,6 +1047,101 @@ function closeModal(){
 document.getElementById('modalBackdrop').addEventListener('click', (e) => {
   if(e.target.id === 'modalBackdrop') closeModal();
 });
+
+/* ===================== Invoice ===================== */
+function openInvoice(r, priceVal, vatVal, id){
+  const studioName = DISPLAY_NAMES[currentOwner] || currentOwner;
+  const today = new Date();
+  const dateStr = today.toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+  const invoiceNo = 'INV-' + today.toISOString().slice(0,10).replace(/-/g,'') + '-' + id.slice(-4).toUpperCase();
+  const clientName = [r.first, r.last].filter(Boolean).join(' ') || 'Client';
+  const descriptionParts = [];
+  if(r.idea) descriptionParts.push(r.idea);
+  if(r.placement) descriptionParts.push('Placement: ' + r.placement);
+  if(r.size) descriptionParts.push('Size: ' + r.size);
+  const description = descriptionParts.join('. ') || 'Tattoo appointment';
+
+  // The confirmed price is the price before VAT. VAT is added on top to get what to charge.
+  const fmt = fmtAmount;
+  const netAmount = parseAmount(priceVal);
+  const symbol = currencySymbol(priceVal);
+  const vatPct = parseFloat(vatVal) || 0;
+  const vatAmount = netAmount * vatPct / 100;
+  const grossAmount = netAmount + vatAmount;
+
+  const lineRowsHtml = vatPct > 0 ? `
+        <tr><td>${description}</td><td class="amount-col">${symbol}${fmt(netAmount)}</td></tr>
+        <tr><td>VAT (${fmt(vatPct)}%)</td><td class="amount-col">${symbol}${fmt(vatAmount)}</td></tr>
+        <tr class="total-row"><td>Total</td><td class="amount-col">${symbol}${fmt(grossAmount)}</td></tr>
+  ` : `
+        <tr><td>${description}</td><td class="amount-col">${priceVal}</td></tr>
+        <tr class="total-row"><td>Total</td><td class="amount-col">${priceVal}</td></tr>
+  `;
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>Invoice ${invoiceNo}</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@600;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --paper:#EAE7DF; --ink:#17161A; --muted:#8B8579; --line:#CBC6B9; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--paper); color:var(--ink); font-family:'IBM Plex Mono',monospace; }
+  .sheet{ max-width:640px; margin:0 auto; padding:60px 40px; }
+  .head{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:50px; }
+  .studio{ font-family:'Inter',sans-serif; font-weight:800; font-size:22px; }
+  .meta{ text-align:right; font-size:12px; color:var(--muted); line-height:1.6; }
+  .row2{ display:flex; justify-content:space-between; gap:30px; margin-bottom:40px; }
+  .block .k{ font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:6px; }
+  .block .v{ font-size:14px; line-height:1.6; }
+  table{ width:100%; border-collapse:collapse; margin-bottom:30px; table-layout:fixed; }
+  th:first-child, td:first-child{ width:68%; }
+  th:last-child, td:last-child{ width:32%; }
+  th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted);
+      border-bottom:1px solid var(--ink); padding-bottom:10px; font-weight:400; }
+  td{ padding:16px 0; border-bottom:1px solid var(--line); font-size:14px; vertical-align:top; word-wrap:break-word; }
+  .amount-col{ text-align:right; white-space:nowrap; padding-left:16px; }
+  .total-row td{ border-bottom:none; padding-top:20px; font-family:'Inter',sans-serif; font-weight:800; font-size:18px; }
+  .foot{ margin-top:50px; font-size:12px; color:var(--muted); line-height:1.7; }
+  .print-btn{
+    display:block; margin:40px auto 0; background:var(--ink); color:var(--paper); border:none;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase; letter-spacing:0.06em;
+    padding:12px 24px; cursor:pointer;
+  }
+  @media print{ .print-btn{ display:none; } body{ background:#fff; } .sheet{ padding:20px; } }
+</style></head>
+<body>
+  <div class="sheet">
+    <div class="head">
+      <div class="studio">${studioName}</div>
+      <div class="meta">
+        Invoice ${invoiceNo}<br>
+        ${dateStr}
+      </div>
+    </div>
+    <div class="row2">
+      <div class="block">
+        <div class="k">Billed to</div>
+        <div class="v">${clientName}${r.email ? '<br>' + r.email : ''}</div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Description</th><th class="amount-col">Amount</th></tr></thead>
+      <tbody>${lineRowsHtml}
+      </tbody>
+    </table>
+    <div class="foot">Thank you.</div>
+    <button class="print-btn" onclick="window.print()">Print or save as PDF</button>
+  </div>
+</body></html>`;
+
+  const w = window.open('', '_blank');
+  if(w){
+    w.document.write(html);
+    w.document.close();
+  } else {
+    showToast('Please allow pop-ups to view the invoice');
+  }
+}
 
 /* ===================== Add form ===================== */
 document.getElementById('addForm').addEventListener('submit', (e) => {
@@ -980,17 +1258,9 @@ function promptSetPin(){
 
 function renderAccountingContent(container){
   const priced = requests.filter(r => r.price && r.price.trim());
-  const setAsidePct = (Number(incomeTaxRate) || 0) + (Number(vatRate) || 0);
-
-  function parseAmount(str){
-    const match = str.replace(/,/g, '').match(/[\d]+(\.\d+)?/);
-    return match ? parseFloat(match[0]) : 0;
-  }
-  function currencySymbol(str){
-    const match = str.match(/[€£$]/);
-    return match ? match[0] : '';
-  }
-  function fmt(n){ return n % 1 === 0 ? n : n.toFixed(2); }
+  const setAsidePct = (Number(incomeTaxRate) || 0) + (Number(vatRate) || 0) + (Number(otherRate) || 0);
+  const credit = Number(monthlyCredit) || 0;
+  const fmt = fmtAmount;
 
   const toolbarHtml = `
     <div class="accounting-toolbar">
@@ -1001,6 +1271,12 @@ function renderAccountingContent(container){
         <label>VAT %
           <input type="number" id="vatInput" value="${vatRate || ''}" placeholder="0" min="0" max="100" step="0.1">
         </label>
+        <label>Other % <span class="tax-hint-inline">pension etc.</span>
+          <input type="number" id="otherRateInput" value="${otherRate || ''}" placeholder="0" min="0" max="100" step="0.1">
+        </label>
+        <label>Monthly credit <span class="tax-hint-inline">flat amount</span>
+          <input type="number" id="creditInput" value="${monthlyCredit || ''}" placeholder="0" min="0" step="1">
+        </label>
         <button id="saveTaxBtn" class="save-btn-small">Save</button>
       </div>
       <div class="pin-controls">
@@ -1010,6 +1286,7 @@ function renderAccountingContent(container){
         }
       </div>
     </div>
+    <div class="tax-note">If your tax is based on brackets rather than one flat rate, use your effective rate (roughly what you actually end up paying overall), not your top bracket. A credit is a fixed amount taken off, not a percentage, so it only gets subtracted once per month, not per booking.</div>
   `;
 
   let bodyHtml;
@@ -1038,26 +1315,46 @@ function renderAccountingContent(container){
 
     bodyHtml = monthKeys.map(month => {
       const entries = groups[month];
-      let total = 0;
-      let symbol = '';
+
+      // Group by currency so different currencies never get summed together
+      const byCurrency = {};
       entries.forEach(r => {
-        total += parseAmount(r.price);
-        if(!symbol) symbol = currencySymbol(r.price);
+        const sym = currencySymbol(r.price) || 'no symbol';
+        if(!byCurrency[sym]) byCurrency[sym] = { total: 0, entries: [] };
+        byCurrency[sym].total += grossAmountFor(r);
+        byCurrency[sym].entries.push(r);
       });
-      const setAside = total * setAsidePct / 100;
+      const currencyKeys = Object.keys(byCurrency);
+      // Credit is a single flat amount, only meaningful in one currency, apply to the largest group
+      const primaryCurrency = currencyKeys.reduce((a, b) => byCurrency[a].total >= byCurrency[b].total ? a : b);
+
+      const totalsHtml = currencyKeys.map(sym => {
+        const t = byCurrency[sym].total;
+        const rawSetAside = t * setAsidePct / 100;
+        const appliedCredit = (sym === primaryCurrency) ? credit : 0;
+        const setAside = Math.max(0, rawSetAside - appliedCredit);
+        const displaySym = sym === 'no symbol' ? '' : sym;
+        return `
+          <div class="currency-total-block">
+            <div class="month-total">${displaySym}${fmt(t)}</div>
+            ${setAsidePct > 0 ? `<div class="month-setaside">Set aside estimate (${fmt(setAsidePct)}%${appliedCredit > 0 ? `, minus ${displaySym}${fmt(appliedCredit)} credit` : ''}): ${displaySym}${fmt(setAside)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
       return `
         <div class="month-card">
           <div class="month-head">
             <span class="month-name">${month}</span>
             <span class="month-count">${entries.length} booking${entries.length === 1 ? '' : 's'}</span>
           </div>
-          <div class="month-total">${symbol}${fmt(total)}</div>
-          ${setAsidePct > 0 ? `<div class="month-setaside">Set aside estimate (${fmt(setAsidePct)}%): ${symbol}${fmt(setAside)}</div>` : ''}
+          ${currencyKeys.length > 1 ? `<div class="mixed-currency-note">Mixed currencies this month, shown separately. Credit applied to ${primaryCurrency === 'no symbol' ? 'the larger total' : primaryCurrency} only.</div>` : ''}
+          ${totalsHtml}
           <div class="month-entries">
             ${entries.map(r => `
               <div class="month-entry">
                 <span class="name">${r.first} ${r.last}</span>
-                <span>${r.price}</span>
+                <span>${currencySymbol(r.price)}${fmt(grossAmountFor(r))}${r.vatRate ? ` <span class="vat-tag">incl. ${fmtAmount(parseFloat(r.vatRate))}% VAT</span>` : ''}</span>
               </div>
             `).join('')}
           </div>
@@ -1071,10 +1368,14 @@ function renderAccountingContent(container){
   document.getElementById('saveTaxBtn').addEventListener('click', () => {
     const incomeVal = parseFloat(document.getElementById('incomeTaxInput').value) || 0;
     const vatVal = parseFloat(document.getElementById('vatInput').value) || 0;
-    db.collection('settings').doc(currentOwner).set({ incomeTaxRate: incomeVal, vatRate: vatVal }, { merge: true })
+    const otherVal = parseFloat(document.getElementById('otherRateInput').value) || 0;
+    const creditVal = parseFloat(document.getElementById('creditInput').value) || 0;
+    db.collection('settings').doc(currentOwner).set({ incomeTaxRate: incomeVal, vatRate: vatVal, otherRate: otherVal, monthlyCredit: creditVal }, { merge: true })
       .then(() => {
         incomeTaxRate = incomeVal;
         vatRate = vatVal;
+        otherRate = otherVal;
+        monthlyCredit = creditVal;
         showToast('Tax rates saved');
         renderAccounting();
       })

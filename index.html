@@ -286,6 +286,67 @@
     font-size:12.5px; padding:5px 0; color:var(--ink);
   }
   .month-entry .name{ color:var(--muted); }
+  .month-setaside{
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--muted);
+    margin-top:4px; margin-bottom:8px;
+  }
+
+  /* ---------- Accounting: PIN gate ---------- */
+  .pin-gate{
+    border:1px solid var(--line); background:var(--panel); padding:40px 24px;
+    text-align:center; max-width:320px; margin:30px auto;
+  }
+  .pin-gate-label{
+    font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase;
+    letter-spacing:0.05em; color:var(--muted); margin-bottom:16px;
+  }
+  .pin-input{
+    width:100%; font-family:'IBM Plex Mono',monospace; font-size:20px; text-align:center;
+    letter-spacing:0.3em; padding:12px; border:1px solid var(--line); background:var(--paper);
+    color:var(--ink); outline:none; margin-bottom:14px;
+  }
+  .pin-input:focus{ border-color:var(--ink); }
+  .pin-submit{
+    width:100%; background:var(--ink); color:var(--paper); border:none;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase;
+    letter-spacing:0.06em; padding:12px 0; cursor:pointer;
+  }
+  .pin-error{
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#B2453D; margin-top:10px;
+  }
+  .pin-set-panel{
+    border:1px solid var(--line); background:var(--panel); padding:24px; margin-bottom:20px;
+    max-width:320px;
+  }
+  .link-btn{
+    background:none; border:none; cursor:pointer; padding:0;
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; text-transform:uppercase;
+    letter-spacing:0.05em; color:var(--muted); text-decoration:underline; text-underline-offset:3px;
+  }
+  .link-btn:hover{ color:var(--ink); }
+
+  /* ---------- Accounting: tax settings ---------- */
+  .accounting-toolbar{
+    display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px;
+    margin-bottom:24px; padding-bottom:20px; border-bottom:1px solid var(--line);
+  }
+  .tax-row{ display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; }
+  .tax-row label{
+    display:flex; flex-direction:column; gap:6px;
+    font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.05em; color:var(--muted);
+  }
+  .tax-row input{
+    width:90px; font-family:'IBM Plex Mono',monospace; font-size:14px;
+    padding:8px 10px; border:1px solid var(--line); background:var(--panel); color:var(--ink); outline:none;
+  }
+  .tax-row input:focus{ border-color:var(--ink); }
+  .save-btn-small{
+    background:var(--ink); color:var(--paper); border:none;
+    font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.05em; padding:9px 14px; cursor:pointer; height:fit-content;
+  }
+  .pin-controls{ display:flex; gap:16px; }
 
   /* ---------- Toast ---------- */
   .toast{
@@ -517,6 +578,8 @@ auth.onAuthStateChanged(user => {
     startListening();
   } else {
     currentOwner = null;
+    accountingUnlocked = false;
+    settingsLoaded = false;
     document.getElementById('loginGate').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
     if(unsubscribeRequests){ unsubscribeRequests(); unsubscribeRequests = null; }
@@ -530,6 +593,11 @@ let activeStatus = '';
 let activeCity = '';
 let activeSearch = '';
 let activeReqId = null;
+let accountingPin = '';
+let accountingUnlocked = false;
+let incomeTaxRate = 0;
+let vatRate = 0;
+let settingsLoaded = false;
 
 function startListening(){
   unsubscribeRequests = db.collection('requests')
@@ -578,12 +646,18 @@ function startListening(){
     });
 
   db.collection('settings').doc(currentOwner).get().then(doc => {
-    if(doc.exists && doc.data().url){
-      const url = doc.data().url;
-      document.getElementById('calUrlInput').value = url;
-      document.getElementById('calIframe').src = url;
-      document.getElementById('calEmbed').style.display = 'block';
+    if(doc.exists){
+      const data = doc.data();
+      if(data.url){
+        document.getElementById('calUrlInput').value = data.url;
+        document.getElementById('calIframe').src = data.url;
+        document.getElementById('calEmbed').style.display = 'block';
+      }
+      accountingPin = data.accountingPin || '';
+      incomeTaxRate = data.incomeTaxRate || 0;
+      vatRate = data.vatRate || 0;
     }
+    settingsLoaded = true;
   });
 }
 
@@ -836,23 +910,77 @@ document.getElementById('calSaveBtn').addEventListener('click', () => {
 /* ===================== Accounting ===================== */
 function renderAccounting(){
   const container = document.getElementById('accountingContent');
-  const priced = requests.filter(r => r.price && r.price.trim());
 
-  if(priced.length === 0){
-    container.innerHTML = `
-      <div class="empty-state">
-        <span class="accent">Nothing here yet.</span>
-        Add a confirmed price to a request, and it'll show up here grouped by month.
-      </div>`;
+  if(!settingsLoaded){
+    container.innerHTML = `<div class="empty-state"><span class="accent">Loading…</span></div>`;
+    setTimeout(renderAccounting, 200);
     return;
   }
 
-  const groups = {};
-  priced.forEach(r => {
-    const key = (r.priceMonth && r.priceMonth.trim()) || 'No month set';
-    if(!groups[key]) groups[key] = [];
-    groups[key].push(r);
+  if(accountingPin && !accountingUnlocked){
+    renderAccountingLock(container);
+    return;
+  }
+
+  renderAccountingContent(container);
+}
+
+function renderAccountingLock(container){
+  container.innerHTML = `
+    <div class="pin-gate">
+      <div class="pin-gate-label">Enter PIN to view accounting</div>
+      <input type="password" inputmode="numeric" maxlength="8" id="pinInput" class="pin-input" placeholder="••••">
+      <button id="pinSubmit" class="pin-submit">Unlock</button>
+      <div class="pin-error" id="pinError" style="display:none;">Wrong PIN, try again.</div>
+    </div>
+  `;
+  const submit = () => {
+    const val = document.getElementById('pinInput').value;
+    if(val && val === accountingPin){
+      accountingUnlocked = true;
+      renderAccounting();
+    } else {
+      document.getElementById('pinError').style.display = 'block';
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinInput').focus();
+    }
+  };
+  document.getElementById('pinSubmit').addEventListener('click', submit);
+  document.getElementById('pinInput').addEventListener('keydown', e => { if(e.key === 'Enter') submit(); });
+  document.getElementById('pinInput').focus();
+}
+
+function promptSetPin(){
+  const container = document.getElementById('accountingContent');
+  container.insertAdjacentHTML('afterbegin', `
+    <div class="pin-set-panel" id="pinSetPanel">
+      <div class="pin-gate-label">${accountingPin ? 'Change PIN' : 'Set a PIN'}</div>
+      <input type="password" inputmode="numeric" maxlength="8" id="newPinInput" class="pin-input" placeholder="New PIN">
+      <button id="savePinBtn" class="pin-submit">Save</button>
+      <div style="margin-top:10px; text-align:center;">
+        <button id="cancelPinBtn" class="link-btn">Cancel</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('newPinInput').focus();
+  document.getElementById('savePinBtn').addEventListener('click', () => {
+    const val = document.getElementById('newPinInput').value.trim();
+    if(!val){ showToast('Enter a PIN first'); return; }
+    db.collection('settings').doc(currentOwner).set({ accountingPin: val }, { merge: true })
+      .then(() => {
+        accountingPin = val;
+        accountingUnlocked = true;
+        showToast('PIN saved');
+        renderAccounting();
+      })
+      .catch(() => showToast('Could not save PIN'));
   });
+  document.getElementById('cancelPinBtn').addEventListener('click', () => renderAccounting());
+}
+
+function renderAccountingContent(container){
+  const priced = requests.filter(r => r.price && r.price.trim());
+  const setAsidePct = (Number(incomeTaxRate) || 0) + (Number(vatRate) || 0);
 
   function parseAmount(str){
     const match = str.replace(/,/g, '').match(/[\d]+(\.\d+)?/);
@@ -862,42 +990,106 @@ function renderAccounting(){
     const match = str.match(/[€£$]/);
     return match ? match[0] : '';
   }
+  function fmt(n){ return n % 1 === 0 ? n : n.toFixed(2); }
 
-  const monthKeys = Object.keys(groups).sort((a, b) => {
-    const da = Date.parse(a + ' 1');
-    const db_ = Date.parse(b + ' 1');
-    if(isNaN(da) && isNaN(db_)) return a.localeCompare(b);
-    if(isNaN(da)) return 1;
-    if(isNaN(db_)) return -1;
-    return db_ - da;
+  const toolbarHtml = `
+    <div class="accounting-toolbar">
+      <div class="tax-row">
+        <label>Income tax %
+          <input type="number" id="incomeTaxInput" value="${incomeTaxRate || ''}" placeholder="0" min="0" max="100" step="0.1">
+        </label>
+        <label>VAT %
+          <input type="number" id="vatInput" value="${vatRate || ''}" placeholder="0" min="0" max="100" step="0.1">
+        </label>
+        <button id="saveTaxBtn" class="save-btn-small">Save</button>
+      </div>
+      <div class="pin-controls">
+        ${accountingPin
+          ? `<button id="lockNowBtn" class="link-btn">Lock now</button><button id="changePinBtn" class="link-btn">Change PIN</button>`
+          : `<button id="setPinBtn" class="link-btn">Set a PIN</button>`
+        }
+      </div>
+    </div>
+  `;
+
+  let bodyHtml;
+  if(priced.length === 0){
+    bodyHtml = `
+      <div class="empty-state">
+        <span class="accent">Nothing here yet.</span>
+        Add a confirmed price to a request, and it'll show up here grouped by month.
+      </div>`;
+  } else {
+    const groups = {};
+    priced.forEach(r => {
+      const key = (r.priceMonth && r.priceMonth.trim()) || 'No month set';
+      if(!groups[key]) groups[key] = [];
+      groups[key].push(r);
+    });
+
+    const monthKeys = Object.keys(groups).sort((a, b) => {
+      const da = Date.parse(a + ' 1');
+      const db_ = Date.parse(b + ' 1');
+      if(isNaN(da) && isNaN(db_)) return a.localeCompare(b);
+      if(isNaN(da)) return 1;
+      if(isNaN(db_)) return -1;
+      return db_ - da;
+    });
+
+    bodyHtml = monthKeys.map(month => {
+      const entries = groups[month];
+      let total = 0;
+      let symbol = '';
+      entries.forEach(r => {
+        total += parseAmount(r.price);
+        if(!symbol) symbol = currencySymbol(r.price);
+      });
+      const setAside = total * setAsidePct / 100;
+      return `
+        <div class="month-card">
+          <div class="month-head">
+            <span class="month-name">${month}</span>
+            <span class="month-count">${entries.length} booking${entries.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="month-total">${symbol}${fmt(total)}</div>
+          ${setAsidePct > 0 ? `<div class="month-setaside">Set aside estimate (${fmt(setAsidePct)}%): ${symbol}${fmt(setAside)}</div>` : ''}
+          <div class="month-entries">
+            ${entries.map(r => `
+              <div class="month-entry">
+                <span class="name">${r.first} ${r.last}</span>
+                <span>${r.price}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  container.innerHTML = toolbarHtml + bodyHtml;
+
+  document.getElementById('saveTaxBtn').addEventListener('click', () => {
+    const incomeVal = parseFloat(document.getElementById('incomeTaxInput').value) || 0;
+    const vatVal = parseFloat(document.getElementById('vatInput').value) || 0;
+    db.collection('settings').doc(currentOwner).set({ incomeTaxRate: incomeVal, vatRate: vatVal }, { merge: true })
+      .then(() => {
+        incomeTaxRate = incomeVal;
+        vatRate = vatVal;
+        showToast('Tax rates saved');
+        renderAccounting();
+      })
+      .catch(() => showToast('Could not save'));
   });
 
-  container.innerHTML = monthKeys.map(month => {
-    const entries = groups[month];
-    let total = 0;
-    let symbol = '';
-    entries.forEach(r => {
-      total += parseAmount(r.price);
-      if(!symbol) symbol = currencySymbol(r.price);
+  if(accountingPin){
+    document.getElementById('lockNowBtn').addEventListener('click', () => {
+      accountingUnlocked = false;
+      renderAccounting();
     });
-    return `
-      <div class="month-card">
-        <div class="month-head">
-          <span class="month-name">${month}</span>
-          <span class="month-count">${entries.length} booking${entries.length === 1 ? '' : 's'}</span>
-        </div>
-        <div class="month-total">${symbol}${total % 1 === 0 ? total : total.toFixed(2)}</div>
-        <div class="month-entries">
-          ${entries.map(r => `
-            <div class="month-entry">
-              <span class="name">${r.first} ${r.last}</span>
-              <span>${r.price}</span>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `;
-  }).join('');
+    document.getElementById('changePinBtn').addEventListener('click', promptSetPin);
+  } else {
+    document.getElementById('setPinBtn').addEventListener('click', promptSetPin);
+  }
 }
 
 /* ===================== Tabs ===================== */

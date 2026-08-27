@@ -226,6 +226,25 @@
     line-height:1.6; padding:10px; background:var(--panel); border:1px solid var(--line);
     color:var(--ink); resize:vertical;
   }
+  .history-list{ margin-bottom:8px; }
+  .history-entry{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:14px;
+    padding:10px 0; border-bottom:1px dashed var(--line);
+  }
+  .history-entry:last-child{ border-bottom:none; }
+  .history-text{
+    font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink); line-height:1.6;
+  }
+  .history-val{ color:var(--muted); }
+  .history-time{
+    font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; margin-top:2px;
+  }
+  .history-undo{
+    flex-shrink:0; background:none; border:none; cursor:pointer; padding:0;
+    font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.05em; color:var(--muted); text-decoration:underline; text-underline-offset:3px;
+  }
+  .history-undo:hover{ color:var(--ink); }
   .modal-footer{
     display:flex; justify-content:space-between; align-items:center; margin-top:22px;
     padding-top:16px; border-top:1px solid var(--line);
@@ -483,7 +502,9 @@
         <input type="text" id="searchInput" placeholder="Search by name…" class="search-input">
         <select class="city-filter" id="cityFilter">
           <option value="">All cities</option>
+          <option>London</option>
           <option>Reykjavík</option>
+          <option>Reykjavik</option>
           <option>Manchester</option>
           <option>New York</option>
           <option>LA</option>
@@ -496,6 +517,9 @@
           <option>Melbourne</option>
           <option>Tokyo</option>
           <option>Seoul</option>
+          <option>Toronto</option>
+          <option>Montreal</option>
+          <option>Chicago</option>
         </select>
       </div>
 
@@ -514,7 +538,7 @@
           <div class="form-field"><label>City</label>
             <select id="f_city" required>
               <option value="">Select…</option>
-              <option>Reykjavík</option><option>Manchester</option><option>New York</option><option>LA</option><option>Paris</option><option>Brighton</option><option>Berlin</option><option>Amsterdam</option><option>Copenhagen</option><option>Sydney</option><option>Melbourne</option><option>Tokyo</option><option>Seoul</option>
+              <option>London</option><option>Reykjavík</option><option>Manchester</option><option>New York</option><option>LA</option><option>Paris</option><option>Brighton</option><option>Berlin</option><option>Amsterdam</option><option>Copenhagen</option><option>Sydney</option><option>Melbourne</option><option>Tokyo</option><option>Seoul</option><option>Toronto</option><option>Montreal</option><option>Chicago</option>
             </select>
           </div>
           <div class="form-field"><label>Instagram</label><input type="text" id="f_ig" placeholder="@handle"></div>
@@ -759,6 +783,10 @@ function startListening(){
           price: d.price || '',
           priceMonth: d.priceMonth || '',
           vatRate: d.vatRate || '',
+          invoiceDescription: d.invoiceDescription || '',
+          confirmedDate: d.confirmedDate || '',
+          confirmedTime: d.confirmedTime || '',
+          history: d.history || [],
           status: d.status || 'New',
           attachmentPaths: d.attachmentPaths || (d.attachmentPath ? [d.attachmentPath] : []),
           attachmentNames: d.attachmentNames || (d.attachmentName ? [d.attachmentName] : []),
@@ -872,6 +900,13 @@ function defaultInvoiceDescription(r){
   if(r.size) parts.push('Size: ' + clean(r.size));
   return parts.join('. ') || 'Tattoo appointment';
 }
+function buildHistoryEntries(existingHistory, changes){
+  const now = Date.now();
+  const newEntries = changes
+    .filter(c => (c.from || '') !== (c.to || ''))
+    .map(c => ({ field: c.field, label: c.label, from: c.from || '', to: c.to || '', at: now }));
+  return (existingHistory || []).concat(newEntries);
+}
 
 function renderList(){
   let list = requests.slice().sort((a,b) => b.createdAt - a.createdAt);
@@ -982,11 +1017,40 @@ function openModal(id){
     </div>
     <div class="charge-total" id="chargeTotal"></div>
 
+    <div class="notes-label">Confirmed date and time</div>
+    <div class="price-row" style="grid-template-columns:1fr 1fr;">
+      <div>
+        <label>Date</label>
+        <input type="date" id="confirmedDateField" value="${r.confirmedDate || ''}">
+      </div>
+      <div>
+        <label>Time</label>
+        <input type="time" id="confirmedTimeField" value="${r.confirmedTime || ''}">
+      </div>
+    </div>
+
     <div class="notes-label">Invoice description</div>
     <textarea class="notes" id="invoiceDescField" style="min-height:56px;">${r.invoiceDescription || defaultInvoiceDescription(r)}</textarea>
 
     <div class="notes-label">Notes</div>
     <textarea class="notes" id="notesField">${r.notes || ''}</textarea>
+
+    ${r.history && r.history.length ? `
+    <div class="notes-label">History</div>
+    <div class="history-list">
+      ${r.history.slice().reverse().map((h, revIdx) => {
+        const idx = r.history.length - 1 - revIdx;
+        return `
+        <div class="history-entry">
+          <div class="history-text">
+            <b>${h.label}</b> changed from <span class="history-val">${h.from || 'empty'}</span> to <span class="history-val">${h.to || 'empty'}</span>
+            <div class="history-time">${timeAgo(h.at)}</div>
+          </div>
+          <button class="history-undo" data-idx="${idx}" type="button">Undo</button>
+        </div>`;
+      }).join('')}
+    </div>
+    ` : ''}
 
     <div class="modal-footer">
       <button class="delete-link" id="deleteReq">Delete request</button>
@@ -1000,9 +1064,29 @@ function openModal(id){
   modal.querySelectorAll('.status-switch button').forEach(btn => {
     btn.addEventListener('click', () => {
       const newStatus = btn.dataset.s;
-      db.collection('requests').doc(id).update({ status: newStatus })
+      if(newStatus === r.status) return;
+      const newHistory = buildHistoryEntries(r.history, [
+        { field:'status', label:'Status', from:r.status, to:newStatus }
+      ]);
+      db.collection('requests').doc(id).update({ status: newStatus, history: newHistory })
         .then(() => showToast('Marked as ' + newStatus))
         .catch(() => showToast('Could not update status'));
+    });
+  });
+
+  modal.querySelectorAll('.history-undo').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.idx);
+      const entry = r.history[idx];
+      if(!entry) return;
+      const updateObj = {};
+      updateObj[entry.field] = entry.from;
+      updateObj.history = buildHistoryEntries(r.history, [
+        { field: entry.field, label: entry.label, from: entry.to, to: entry.from }
+      ]);
+      db.collection('requests').doc(id).update(updateObj)
+        .then(() => showToast('Reverted'))
+        .catch(() => showToast('Could not undo'));
     });
   });
 
@@ -1032,7 +1116,22 @@ function openModal(id){
     const priceMonthVal = document.getElementById('priceMonthField').value;
     const vatVal = document.getElementById('priceVatField').value;
     const invoiceDescVal = document.getElementById('invoiceDescField').value;
-    db.collection('requests').doc(id).update({ notes: notesVal, price: priceVal, priceMonth: priceMonthVal, vatRate: vatVal, invoiceDescription: invoiceDescVal })
+    const dateVal = document.getElementById('confirmedDateField').value;
+    const timeVal = document.getElementById('confirmedTimeField').value;
+
+    const newHistory = buildHistoryEntries(r.history, [
+      { field:'price', label:'Price', from:r.price, to:priceVal },
+      { field:'priceMonth', label:'Month', from:r.priceMonth, to:priceMonthVal },
+      { field:'vatRate', label:'VAT %', from:r.vatRate, to:vatVal },
+      { field:'confirmedDate', label:'Date', from:r.confirmedDate, to:dateVal },
+      { field:'confirmedTime', label:'Time', from:r.confirmedTime, to:timeVal }
+    ]);
+
+    db.collection('requests').doc(id).update({
+      notes: notesVal, price: priceVal, priceMonth: priceMonthVal, vatRate: vatVal,
+      invoiceDescription: invoiceDescVal, confirmedDate: dateVal, confirmedTime: timeVal,
+      history: newHistory
+    })
       .then(() => showToast('Saved'))
       .catch(() => showToast('Could not save'));
   });

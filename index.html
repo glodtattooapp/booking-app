@@ -504,7 +504,6 @@
           <option value="">All cities</option>
           <option>London</option>
           <option>Reykjavík</option>
-          <option>Reykjavik</option>
           <option>Manchester</option>
           <option>New York</option>
           <option>LA</option>
@@ -905,7 +904,16 @@ function buildHistoryEntries(existingHistory, changes){
   const newEntries = changes
     .filter(c => (c.from || '') !== (c.to || ''))
     .map(c => ({ field: c.field, label: c.label, from: c.from || '', to: c.to || '', at: now }));
-  return (existingHistory || []).concat(newEntries);
+  return newEntries.length ? newEntries : (existingHistory || []);
+}
+function monthLabelFromDate(dateStr){
+  if(!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if(isNaN(d)) return '';
+  return d.toLocaleDateString('en-GB', { month:'long', year:'numeric' });
+}
+function accountingMonthFor(r){
+  return monthLabelFromDate(r.confirmedDate) || (r.priceMonth && r.priceMonth.trim()) || '';
 }
 
 function renderList(){
@@ -1000,23 +1008,6 @@ function openModal(id){
       </div>
     </div>` : ''}
 
-    <div class="notes-label">Confirmed price <span class="tax-hint-inline">before VAT</span></div>
-    <div class="price-row">
-      <div>
-        <label>Price</label>
-        <input type="text" id="priceField" placeholder="e.g. €300" value="${r.price || ''}">
-      </div>
-      <div>
-        <label>Month</label>
-        <input type="text" id="priceMonthField" placeholder="e.g. August 2026" value="${r.priceMonth || ''}">
-      </div>
-      <div>
-        <label>VAT %</label>
-        <input type="number" id="priceVatField" placeholder="0" min="0" max="100" step="0.1" value="${r.vatRate || ''}">
-      </div>
-    </div>
-    <div class="charge-total" id="chargeTotal"></div>
-
     <div class="notes-label">Confirmed date and time</div>
     <div class="price-row" style="grid-template-columns:1fr 1fr;">
       <div>
@@ -1028,6 +1019,20 @@ function openModal(id){
         <input type="time" id="confirmedTimeField" value="${r.confirmedTime || ''}">
       </div>
     </div>
+    <div class="tax-hint-inline" style="display:block; margin-top:-10px; margin-bottom:20px;">The date sets which month this counts toward in Accounting.</div>
+
+    <div class="notes-label">Confirmed price <span class="tax-hint-inline">before VAT</span></div>
+    <div class="price-row" style="grid-template-columns:1fr 1fr;">
+      <div>
+        <label>Price</label>
+        <input type="text" id="priceField" placeholder="e.g. €300" value="${r.price || ''}">
+      </div>
+      <div>
+        <label>VAT %</label>
+        <input type="number" id="priceVatField" placeholder="0" min="0" max="100" step="0.1" value="${r.vatRate || ''}">
+      </div>
+    </div>
+    <div class="charge-total" id="chargeTotal"></div>
 
     <div class="notes-label">Invoice description</div>
     <textarea class="notes" id="invoiceDescField" style="min-height:56px;">${r.invoiceDescription || defaultInvoiceDescription(r)}</textarea>
@@ -1036,7 +1041,7 @@ function openModal(id){
     <textarea class="notes" id="notesField">${r.notes || ''}</textarea>
 
     ${r.history && r.history.length ? `
-    <div class="notes-label">History</div>
+    <div class="notes-label">Last change</div>
     <div class="history-list">
       ${r.history.slice().reverse().map((h, revIdx) => {
         const idx = r.history.length - 1 - revIdx;
@@ -1113,7 +1118,6 @@ function openModal(id){
   document.getElementById('saveNotes').addEventListener('click', () => {
     const notesVal = document.getElementById('notesField').value;
     const priceVal = document.getElementById('priceField').value;
-    const priceMonthVal = document.getElementById('priceMonthField').value;
     const vatVal = document.getElementById('priceVatField').value;
     const invoiceDescVal = document.getElementById('invoiceDescField').value;
     const dateVal = document.getElementById('confirmedDateField').value;
@@ -1121,14 +1125,13 @@ function openModal(id){
 
     const newHistory = buildHistoryEntries(r.history, [
       { field:'price', label:'Price', from:r.price, to:priceVal },
-      { field:'priceMonth', label:'Month', from:r.priceMonth, to:priceMonthVal },
       { field:'vatRate', label:'VAT %', from:r.vatRate, to:vatVal },
       { field:'confirmedDate', label:'Date', from:r.confirmedDate, to:dateVal },
       { field:'confirmedTime', label:'Time', from:r.confirmedTime, to:timeVal }
     ]);
 
     db.collection('requests').doc(id).update({
-      notes: notesVal, price: priceVal, priceMonth: priceMonthVal, vatRate: vatVal,
+      notes: notesVal, price: priceVal, vatRate: vatVal,
       invoiceDescription: invoiceDescVal, confirmedDate: dateVal, confirmedTime: timeVal,
       history: newHistory
     })
@@ -1409,7 +1412,7 @@ function renderAccountingContent(container){
   } else {
     const groups = {};
     priced.forEach(r => {
-      const key = (r.priceMonth && r.priceMonth.trim()) || 'No month set';
+      const key = accountingMonthFor(r) || 'No date set';
       if(!groups[key]) groups[key] = [];
       groups[key].push(r);
     });

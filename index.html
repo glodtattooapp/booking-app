@@ -526,6 +526,9 @@
           <option value="newest">Newest first</option>
           <option value="date">By confirmed date</option>
         </select>
+        <select class="city-filter" id="monthFilter">
+          <option value="">All months</option>
+        </select>
       </div>
 
       <div id="requestList"></div>
@@ -754,6 +757,7 @@ let activeStatus = '';
 let activeCity = '';
 let activeSearch = '';
 let activeSort = 'newest';
+let activeMonth = '';
 let activeReqId = null;
 let accountingPin = '';
 let accountingUnlocked = false;
@@ -881,6 +885,13 @@ function renderFilters(){
       renderList();
     });
   });
+
+  const monthSelect = document.getElementById('monthFilter');
+  const months = Array.from(new Set(requests.map(r => accountingMonthFor(r)).filter(Boolean)));
+  months.sort((a, b) => Date.parse(a + ' 1') - Date.parse(b + ' 1'));
+  const prevValue = monthSelect.value;
+  monthSelect.innerHTML = `<option value="">All months</option>` + months.map(m => `<option>${m}</option>`).join('');
+  if(months.includes(prevValue)) monthSelect.value = prevValue;
 }
 
 function timeAgo(ts){
@@ -955,6 +966,7 @@ function renderList(){
   }
   if(activeStatus) list = list.filter(r => r.status === activeStatus);
   if(activeCity) list = list.filter(r => r.city === activeCity);
+  if(activeMonth) list = list.filter(r => accountingMonthFor(r) === activeMonth);
   if(activeSearch){
     const q = activeSearch.toLowerCase();
     list = list.filter(r => (r.first + ' ' + r.last).toLowerCase().includes(q));
@@ -991,6 +1003,11 @@ document.getElementById('cityFilter').addEventListener('change', (e) => {
 
 document.getElementById('sortFilter').addEventListener('change', (e) => {
   activeSort = e.target.value;
+  renderList();
+});
+
+document.getElementById('monthFilter').addEventListener('change', (e) => {
+  activeMonth = e.target.value;
   renderList();
 });
 
@@ -1553,42 +1570,165 @@ function renderAccountingContent(container){
 }
 
 /* ===================== Consents ===================== */
+let consentsCache = [];
+let activeConsentSearch = '';
+
 function loadConsents(){
   const container = document.getElementById('consentsContent');
   container.innerHTML = `<div class="empty-state"><span class="accent">Loading…</span></div>`;
   db.collection('consents').where('owner', '==', currentOwner).get().then(snapshot => {
-    const list = [];
-    snapshot.forEach(doc => list.push(doc.data()));
-    list.sort((a, b) => {
+    consentsCache = [];
+    snapshot.forEach(doc => consentsCache.push({ id: doc.id, ...doc.data() }));
+    consentsCache.sort((a, b) => {
       const at = a.createdAt ? a.createdAt.toMillis() : 0;
       const bt = b.createdAt ? b.createdAt.toMillis() : 0;
       return bt - at;
     });
-    if(list.length === 0){
-      container.innerHTML = `
-        <div class="empty-state">
-          <span class="accent">Nothing here yet.</span>
-          Signed consent forms will show up here as clients submit them.
-        </div>`;
-      return;
-    }
-    container.innerHTML = `
-      <p class="tax-hint-inline" style="display:block; margin-bottom:20px;">${list.length} signed consent form${list.length === 1 ? '' : 's'} on file.</p>
-      ${list.map(c => `
-        <div class="month-card">
-          <div class="month-head">
-            <span class="month-name">${c.first || ''} ${c.last || ''}</span>
-            <span class="month-count">Signed ${c.dateSigned || ''}</span>
-          </div>
-          <div class="month-entry"><span class="name">Email</span><span>${c.email || ''}</span></div>
-          <div class="month-entry"><span class="name">Date of birth</span><span>${c.dob || 'n/a'}</span></div>
-        </div>
-      `).join('')}
-    `;
-  }).catch(() => {
+    renderConsentsList();
+  }).catch((err) => {
+    console.error('Could not load consents', err);
     container.innerHTML = `<div class="empty-state">Could not load consent forms.</div>`;
   });
 }
+
+function renderConsentsList(){
+  const container = document.getElementById('consentsContent');
+  let list = consentsCache;
+  if(activeConsentSearch){
+    const q = activeConsentSearch.toLowerCase();
+    list = list.filter(c => ((c.first || '') + ' ' + (c.last || '')).toLowerCase().includes(q));
+  }
+
+  const searchHtml = `<input type="text" id="consentSearchInput" class="search-input" placeholder="Search by name…" value="${activeConsentSearch}" style="margin-bottom:20px; max-width:320px;">`;
+
+  if(consentsCache.length === 0){
+    container.innerHTML = searchHtml + `
+      <div class="empty-state">
+        <span class="accent">Nothing here yet.</span>
+        Signed consent forms will show up here as clients submit them.
+      </div>`;
+    wireConsentSearch();
+    return;
+  }
+
+  const listHtml = list.length === 0 ? `<div class="empty-state">No consent forms match that name.</div>` : list.map(c => `
+    <div class="month-card consent-card" data-id="${c.id}" style="cursor:pointer;">
+      <div class="month-head">
+        <span class="month-name">${c.first || ''} ${c.last || ''}</span>
+        <span class="month-count">Signed ${c.dateSigned || ''}</span>
+      </div>
+      <div class="month-entry"><span class="name">Email</span><span>${c.email || ''}</span></div>
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    ${searchHtml}
+    <p class="tax-hint-inline" style="display:block; margin-bottom:16px;">${consentsCache.length} signed consent form${consentsCache.length === 1 ? '' : 's'} on file.</p>
+    ${listHtml}
+  `;
+
+  wireConsentSearch();
+  container.querySelectorAll('.consent-card').forEach(card => {
+    card.addEventListener('click', () => openConsentModal(card.dataset.id));
+  });
+}
+
+function wireConsentSearch(){
+  const input = document.getElementById('consentSearchInput');
+  if(!input) return;
+  input.addEventListener('input', (e) => {
+    activeConsentSearch = e.target.value;
+    renderConsentsList();
+    const newInput = document.getElementById('consentSearchInput');
+    if(newInput){ newInput.focus(); newInput.setSelectionRange(newInput.value.length, newInput.value.length); }
+  });
+}
+
+function openConsentModal(id){
+  const c = consentsCache.find(x => x.id === id);
+  if(!c) return;
+  const modal = document.getElementById('modalContent');
+  modal.innerHTML = `
+    <div class="modal-head">
+      <div>
+        <div class="modal-name">${c.first || ''} ${c.last || ''}</div>
+        <div class="modal-tag">Signed ${c.dateSigned || 'n/a'}</div>
+      </div>
+      <button class="modal-close" id="closeModal">✕</button>
+    </div>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">Email</div><div class="v">${c.email || 'n/a'}</div></div>
+      <div class="detail-item"><div class="k">Age</div><div class="v">${c.age || 'n/a'}</div></div>
+      <div class="detail-item"><div class="k">Date of birth</div><div class="v">${c.dob || 'n/a'}</div></div>
+      <div class="detail-item"><div class="k">Under influence today</div><div class="v">${c.underInfluence || 'n/a'}</div></div>
+      <div class="detail-item"><div class="k">Pregnant / nursing</div><div class="v">${c.pregnantNursing || 'n/a'}</div></div>
+      <div class="detail-item"><div class="k">Communicable disease</div><div class="v">${c.communicableDisease || 'n/a'}</div></div>
+      <div class="detail-item full"><div class="k">Skin conditions</div><div class="v">${c.skinConditions || 'None noted'}</div></div>
+      <div class="detail-item full"><div class="k">Medical history</div><div class="v">${c.medicalHistory || 'None noted'}</div></div>
+      <div class="detail-item full"><div class="k">Signature</div><div class="v">${c.signature || 'n/a'}</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="delete-link" id="deleteConsent">Delete record</button>
+      <button class="save-btn" id="downloadConsent" type="button" style="background:var(--panel); color:var(--ink); border:1px solid var(--ink);">Print / Save as PDF</button>
+    </div>
+  `;
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('deleteConsent').addEventListener('click', () => {
+    if(!confirm('Delete this consent record? This cannot be undone.')) return;
+    db.collection('consents').doc(id).delete()
+      .then(() => { showToast('Consent record deleted'); closeModal(); loadConsents(); })
+      .catch(() => showToast('Could not delete record'));
+  });
+  document.getElementById('downloadConsent').addEventListener('click', () => openConsentPrintable(c));
+  document.getElementById('modalBackdrop').classList.add('show');
+}
+
+function openConsentPrintable(c){
+  const studioName = getDisplayName();
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>Consent form, ${c.first || ''} ${c.last || ''}</title>
+<style>
+  :root{ --paper:#EAE7DF; --ink:#17161A; --muted:#8B8579; --line:#CBC6B9; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--paper); color:var(--ink); font-family:'IBM Plex Mono',monospace; }
+  .sheet{ max-width:640px; margin:0 auto; padding:60px 40px; }
+  h1{ font-family:'Inter',sans-serif; font-weight:800; font-size:24px; margin:0 0 4px; }
+  .sub{ color:var(--muted); font-size:12px; margin-bottom:36px; }
+  .row{ display:flex; justify-content:space-between; gap:20px; padding:10px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .row .k{ color:var(--muted); flex-shrink:0; }
+  .block{ margin-top:20px; }
+  .block .k{ font-size:11px; text-transform:uppercase; color:var(--muted); margin-bottom:6px; }
+  .print-btn{
+    display:block; margin:40px auto 0; background:var(--ink); color:var(--paper); border:none;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase; letter-spacing:0.06em;
+    padding:12px 24px; cursor:pointer;
+  }
+  @media print{ .print-btn{ display:none; } body{ background:#fff; } }
+</style></head>
+<body>
+  <div class="sheet">
+    <h1>${studioName}</h1>
+    <div class="sub">Consent form record</div>
+    <div class="row"><span class="k">Name</span><span>${c.first || ''} ${c.last || ''}</span></div>
+    <div class="row"><span class="k">Email</span><span>${c.email || 'n/a'}</span></div>
+    <div class="row"><span class="k">Age</span><span>${c.age || 'n/a'}</span></div>
+    <div class="row"><span class="k">Date of birth</span><span>${c.dob || 'n/a'}</span></div>
+    <div class="row"><span class="k">Under influence today</span><span>${c.underInfluence || 'n/a'}</span></div>
+    <div class="row"><span class="k">Pregnant / nursing</span><span>${c.pregnantNursing || 'n/a'}</span></div>
+    <div class="row"><span class="k">Communicable disease</span><span>${c.communicableDisease || 'n/a'}</span></div>
+    <div class="block"><div class="k">Skin conditions</div><div>${c.skinConditions || 'None noted'}</div></div>
+    <div class="block"><div class="k">Medical history</div><div>${c.medicalHistory || 'None noted'}</div></div>
+    <div class="row" style="margin-top:20px;"><span class="k">Date signed</span><span>${c.dateSigned || 'n/a'}</span></div>
+    <div class="row"><span class="k">Signature</span><span>${c.signature || 'n/a'}</span></div>
+    <button class="print-btn" onclick="window.print()">Print or save as PDF</button>
+  </div>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if(w){ w.document.write(html); w.document.close(); }
+  else { showToast('Please allow pop-ups to view the consent form'); }
+}
+
 function checkConsentOnFile(email, callback){
   if(!email){ callback(false); return; }
   db.collection('consents').where('owner', '==', currentOwner).where('email', '==', email).limit(1).get()
@@ -1621,9 +1761,8 @@ function loadGuestSpots(){
   });
 }
 
-function renderGuestSpots(slots){
+function loadGuestSpots(){
   const container = document.getElementById('guestSpotsContent');
-  slots.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
   const formHtml = `
     <div class="settings-block" style="max-width:600px;">
@@ -1637,6 +1776,54 @@ function renderGuestSpots(slots){
       <button id="addSlotBtn" class="save-btn-small" style="margin-top:6px;">Add slot</button>
     </div>
   `;
+
+  // The add-slot form always renders immediately, whether or not the list below loads successfully.
+  container.innerHTML = formHtml + '<div id="guestSlotsList" style="margin-top:24px;"><div class="empty-state"><span class="accent">Loading…</span></div></div>';
+
+  document.getElementById('addSlotBtn').addEventListener('click', () => {
+    const city = document.getElementById('gsCity').value.trim();
+    const date = document.getElementById('gsDate').value;
+    const time = document.getElementById('gsTime').value;
+    const deposit = document.getElementById('gsDeposit').value.trim();
+    if(!city || !date || !deposit){ showToast('Add a city, date, and deposit amount'); return; }
+    db.collection('guestSlots').add({
+      owner: currentOwner, city, date, time, deposit, status: 'open', heldBy: null, heldAt: null,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => { showToast('Slot added'); loadGuestSpotsList(); })
+      .catch((err) => {
+        console.error('Could not add guest slot', err);
+        showToast('Could not add slot, check Firestore rules for guestSlots');
+      });
+  });
+
+  loadGuestSpotsList();
+}
+
+function loadGuestSpotsList(){
+  const listContainer = document.getElementById('guestSlotsList');
+  db.collection('guestSlots').where('owner', '==', currentOwner).get().then(snapshot => {
+    const slots = [];
+    snapshot.forEach(doc => slots.push({ id: doc.id, ...doc.data() }));
+
+    // Lazy expiry: any held slot past 24h with no confirmation gets released automatically
+    const now = Date.now();
+    const releases = [];
+    slots.forEach(s => {
+      if(s.status === 'held' && s.heldAt && (now - s.heldAt) > HOLD_WINDOW_MS){
+        releases.push(db.collection('guestSlots').doc(s.id).update({ status: 'open', heldBy: null, heldAt: null }));
+        s.status = 'open'; s.heldBy = null; s.heldAt = null;
+      }
+    });
+    Promise.all(releases).then(() => renderGuestSpotsList(slots));
+  }).catch((err) => {
+    console.error('Could not load guest spots', err);
+    listContainer.innerHTML = `<div class="empty-state">Could not load your saved slots. This usually means the Firestore rules for "guestSlots" haven't been published yet, the add form above still works once that's fixed.</div>`;
+  });
+}
+
+function renderGuestSpotsList(slots){
+  const listContainer = document.getElementById('guestSlotsList');
+  slots.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
   const statusLabel = { open: 'Open', held: 'Held, awaiting payment', confirmed: 'Confirmed' };
   const listHtml = slots.length === 0 ? `
@@ -1662,34 +1849,21 @@ function renderGuestSpots(slots){
     </div>
   `).join('');
 
-  container.innerHTML = formHtml + '<div style="margin-top:24px;">' + listHtml + '</div>';
+  listContainer.innerHTML = listHtml;
 
-  document.getElementById('addSlotBtn').addEventListener('click', () => {
-    const city = document.getElementById('gsCity').value.trim();
-    const date = document.getElementById('gsDate').value;
-    const time = document.getElementById('gsTime').value;
-    const deposit = document.getElementById('gsDeposit').value.trim();
-    if(!city || !date || !deposit){ showToast('Add a city, date, and deposit amount'); return; }
-    db.collection('guestSlots').add({
-      owner: currentOwner, city, date, time, deposit, status: 'open', heldBy: null, heldAt: null,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    }).then(() => { showToast('Slot added'); loadGuestSpots(); })
-      .catch(() => showToast('Could not add slot'));
-  });
-
-  container.querySelectorAll('[data-action]').forEach(btn => {
+  listContainer.querySelectorAll('[data-action]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
       const action = btn.dataset.action;
       if(action === 'delete'){
         if(!confirm('Delete this slot? This cannot be undone.')) return;
-        db.collection('guestSlots').doc(id).delete().then(() => { showToast('Slot deleted'); loadGuestSpots(); });
+        db.collection('guestSlots').doc(id).delete().then(() => { showToast('Slot deleted'); loadGuestSpotsList(); });
       } else if(action === 'release'){
         db.collection('guestSlots').doc(id).update({ status: 'open', heldBy: null, heldAt: null })
-          .then(() => { showToast('Slot released'); loadGuestSpots(); });
+          .then(() => { showToast('Slot released'); loadGuestSpotsList(); });
       } else if(action === 'confirm'){
         db.collection('guestSlots').doc(id).update({ status: 'confirmed' })
-          .then(() => { showToast('Marked as paid'); loadGuestSpots(); });
+          .then(() => { showToast('Marked as paid'); loadGuestSpotsList(); });
       }
     });
   });

@@ -1823,7 +1823,11 @@ function loadGuestSpotsList(){
 
 function renderGuestSpotsList(slots){
   const listContainer = document.getElementById('guestSlotsList');
-  slots.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  slots.sort((a, b) => {
+    const byDate = (a.date || '').localeCompare(b.date || '');
+    if(byDate !== 0) return byDate;
+    return (a.time || '').localeCompare(b.time || '');
+  });
 
   const statusLabel = { open: 'Open', held: 'Held, awaiting payment', confirmed: 'Confirmed' };
   const listHtml = slots.length === 0 ? `

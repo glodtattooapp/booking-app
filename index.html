@@ -487,6 +487,8 @@
       <button data-tab="add">Add</button>
       <button data-tab="calendar">Calendar</button>
       <button data-tab="accounting">Accounting</button>
+      <button data-tab="consents">Consents</button>
+      <button data-tab="guestspots">Guest spots</button>
       <button data-tab="settings">Settings</button>
     </nav>
   </header>
@@ -519,6 +521,10 @@
           <option>Toronto</option>
           <option>Montreal</option>
           <option>Chicago</option>
+        </select>
+        <select class="city-filter" id="sortFilter">
+          <option value="newest">Newest first</option>
+          <option value="date">By confirmed date</option>
         </select>
       </div>
 
@@ -578,6 +584,16 @@
     <!-- ACCOUNTING TAB -->
     <section id="tab-accounting" style="display:none;">
       <div id="accountingContent"></div>
+    </section>
+
+    <!-- CONSENTS TAB -->
+    <section id="tab-consents" style="display:none;">
+      <div id="consentsContent"></div>
+    </section>
+
+    <!-- GUEST SPOTS TAB -->
+    <section id="tab-guestspots" style="display:none;">
+      <div id="guestSpotsContent"></div>
     </section>
 
     <!-- SETTINGS TAB -->
@@ -737,6 +753,7 @@ let requests = [];
 let activeStatus = '';
 let activeCity = '';
 let activeSearch = '';
+let activeSort = 'newest';
 let activeReqId = null;
 let accountingPin = '';
 let accountingUnlocked = false;
@@ -915,9 +932,27 @@ function monthLabelFromDate(dateStr){
 function accountingMonthFor(r){
   return monthLabelFromDate(r.confirmedDate) || (r.priceMonth && r.priceMonth.trim()) || '';
 }
+function formatConfirmedDate(r){
+  const d = new Date(r.confirmedDate + 'T00:00:00');
+  if(isNaN(d)) return r.confirmedDate;
+  const dateStr = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+  return r.confirmedTime ? `${dateStr}, ${r.confirmedTime}` : dateStr;
+}
 
 function renderList(){
-  let list = requests.slice().sort((a,b) => b.createdAt - a.createdAt);
+  let list = requests.slice();
+  if(activeSort === 'date'){
+    list.sort((a, b) => {
+      const da = a.confirmedDate ? new Date(a.confirmedDate + 'T' + (a.confirmedTime || '00:00')).getTime() : null;
+      const db_ = b.confirmedDate ? new Date(b.confirmedDate + 'T' + (b.confirmedTime || '00:00')).getTime() : null;
+      if(da === null && db_ === null) return b.createdAt - a.createdAt;
+      if(da === null) return 1;
+      if(db_ === null) return -1;
+      return da - db_;
+    });
+  } else {
+    list.sort((a,b) => b.createdAt - a.createdAt);
+  }
   if(activeStatus) list = list.filter(r => r.status === activeStatus);
   if(activeCity) list = list.filter(r => r.city === activeCity);
   if(activeSearch){
@@ -939,7 +974,7 @@ function renderList(){
     <div class="req-card" data-id="${r.id}">
       <div class="req-name">${r.first} ${r.last}</div>
       <div class="status-pill ${r.status}">${r.status}</div>
-      <div class="req-meta">${r.city} · ${timeAgo(r.createdAt)}</div>
+      <div class="req-meta">${r.city} · ${(activeSort === 'date' && r.confirmedDate) ? formatConfirmedDate(r) : timeAgo(r.createdAt)}</div>
       <div class="req-sub">${(r.idea || 'No description yet').slice(0,90)}${r.idea && r.idea.length>90?'…':''}</div>
     </div>
   `).join('');
@@ -951,6 +986,11 @@ function renderList(){
 
 document.getElementById('cityFilter').addEventListener('change', (e) => {
   activeCity = e.target.value;
+  renderList();
+});
+
+document.getElementById('sortFilter').addEventListener('change', (e) => {
+  activeSort = e.target.value;
   renderList();
 });
 
@@ -994,6 +1034,8 @@ function openModal(id){
     <div class="status-switch">
       ${STATUSES.map(s => `<button data-s="${s}" class="${s===r.status?'current':''}">${s}</button>`).join('')}
     </div>
+
+    <div class="tax-hint-inline" id="consentBadge" style="display:block; margin-bottom:16px;">Checking consent form…</div>
 
     <div class="detail-grid">
       ${detailFields.map(([label, value]) => `<div class="detail-item"><div class="k">${label}</div><div class="v">${value}</div></div>`).join('')}
@@ -1065,6 +1107,13 @@ function openModal(id){
       </div>
     </div>
   `;
+
+  checkConsentOnFile(r.email, (found) => {
+    const badge = document.getElementById('consentBadge');
+    if(!badge) return;
+    if(found === null){ badge.textContent = 'Could not check consent form.'; return; }
+    badge.textContent = found ? 'Consent form on file ✓' : 'No consent form on file yet';
+  });
 
   modal.querySelectorAll('.status-switch button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1503,6 +1552,149 @@ function renderAccountingContent(container){
   }
 }
 
+/* ===================== Consents ===================== */
+function loadConsents(){
+  const container = document.getElementById('consentsContent');
+  container.innerHTML = `<div class="empty-state"><span class="accent">Loading…</span></div>`;
+  db.collection('consents').where('owner', '==', currentOwner).get().then(snapshot => {
+    const list = [];
+    snapshot.forEach(doc => list.push(doc.data()));
+    list.sort((a, b) => {
+      const at = a.createdAt ? a.createdAt.toMillis() : 0;
+      const bt = b.createdAt ? b.createdAt.toMillis() : 0;
+      return bt - at;
+    });
+    if(list.length === 0){
+      container.innerHTML = `
+        <div class="empty-state">
+          <span class="accent">Nothing here yet.</span>
+          Signed consent forms will show up here as clients submit them.
+        </div>`;
+      return;
+    }
+    container.innerHTML = `
+      <p class="tax-hint-inline" style="display:block; margin-bottom:20px;">${list.length} signed consent form${list.length === 1 ? '' : 's'} on file.</p>
+      ${list.map(c => `
+        <div class="month-card">
+          <div class="month-head">
+            <span class="month-name">${c.first || ''} ${c.last || ''}</span>
+            <span class="month-count">Signed ${c.dateSigned || ''}</span>
+          </div>
+          <div class="month-entry"><span class="name">Email</span><span>${c.email || ''}</span></div>
+          <div class="month-entry"><span class="name">Date of birth</span><span>${c.dob || 'n/a'}</span></div>
+        </div>
+      `).join('')}
+    `;
+  }).catch(() => {
+    container.innerHTML = `<div class="empty-state">Could not load consent forms.</div>`;
+  });
+}
+function checkConsentOnFile(email, callback){
+  if(!email){ callback(false); return; }
+  db.collection('consents').where('owner', '==', currentOwner).where('email', '==', email).limit(1).get()
+    .then(snap => callback(!snap.empty))
+    .catch(() => callback(null));
+}
+
+/* ===================== Guest spots ===================== */
+const HOLD_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function loadGuestSpots(){
+  const container = document.getElementById('guestSpotsContent');
+  container.innerHTML = `<div class="empty-state"><span class="accent">Loading…</span></div>`;
+  db.collection('guestSlots').where('owner', '==', currentOwner).get().then(snapshot => {
+    const slots = [];
+    snapshot.forEach(doc => slots.push({ id: doc.id, ...doc.data() }));
+
+    // Lazy expiry: any held slot past 24h with no confirmation gets released automatically
+    const now = Date.now();
+    const releases = [];
+    slots.forEach(s => {
+      if(s.status === 'held' && s.heldAt && (now - s.heldAt) > HOLD_WINDOW_MS){
+        releases.push(db.collection('guestSlots').doc(s.id).update({ status: 'open', heldBy: null, heldAt: null }));
+        s.status = 'open'; s.heldBy = null; s.heldAt = null;
+      }
+    });
+    Promise.all(releases).then(() => renderGuestSpots(slots));
+  }).catch(() => {
+    container.innerHTML = `<div class="empty-state">Could not load guest spots.</div>`;
+  });
+}
+
+function renderGuestSpots(slots){
+  const container = document.getElementById('guestSpotsContent');
+  slots.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  const formHtml = `
+    <div class="settings-block" style="max-width:600px;">
+      <div class="notes-label">Add a guest spot slot</div>
+      <div class="price-row" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+        <div><label>City</label><input type="text" id="gsCity" placeholder="e.g. Manchester"></div>
+        <div><label>Date</label><input type="date" id="gsDate"></div>
+        <div><label>Time</label><input type="time" id="gsTime"></div>
+        <div><label>Deposit</label><input type="text" id="gsDeposit" placeholder="e.g. £100"></div>
+      </div>
+      <button id="addSlotBtn" class="save-btn-small" style="margin-top:6px;">Add slot</button>
+    </div>
+  `;
+
+  const statusLabel = { open: 'Open', held: 'Held, awaiting payment', confirmed: 'Confirmed' };
+  const listHtml = slots.length === 0 ? `
+    <div class="empty-state">
+      <span class="accent">No guest spot slots yet.</span>
+      Add one above to make it available on your guest spot booking page.
+    </div>` : slots.map(s => `
+    <div class="month-card">
+      <div class="month-head">
+        <span class="month-name">${s.city || ''} · ${s.date || ''}${s.time ? ', ' + s.time : ''}</span>
+        <span class="month-count">${statusLabel[s.status] || s.status}</span>
+      </div>
+      <div class="month-entry"><span class="name">Deposit</span><span>${s.deposit || ''}</span></div>
+      ${s.heldBy ? `
+        <div class="month-entry"><span class="name">Held by</span><span>${s.heldBy.name || ''} (${s.heldBy.email || ''})</span></div>
+        <div class="month-entry"><span class="name">Held since</span><span>${s.heldAt ? timeAgo(s.heldAt) : ''}</span></div>
+      ` : ''}
+      <div style="display:flex; gap:14px; margin-top:12px;">
+        ${s.status === 'held' ? `<button class="link-btn" data-action="confirm" data-id="${s.id}">Mark as paid</button><button class="link-btn" data-action="release" data-id="${s.id}">Release slot</button>` : ''}
+        ${s.status === 'confirmed' ? `<button class="link-btn" data-action="release" data-id="${s.id}">Reopen slot</button>` : ''}
+        <button class="link-btn" data-action="delete" data-id="${s.id}">Delete</button>
+      </div>
+    </div>
+  `).join('');
+
+  container.innerHTML = formHtml + '<div style="margin-top:24px;">' + listHtml + '</div>';
+
+  document.getElementById('addSlotBtn').addEventListener('click', () => {
+    const city = document.getElementById('gsCity').value.trim();
+    const date = document.getElementById('gsDate').value;
+    const time = document.getElementById('gsTime').value;
+    const deposit = document.getElementById('gsDeposit').value.trim();
+    if(!city || !date || !deposit){ showToast('Add a city, date, and deposit amount'); return; }
+    db.collection('guestSlots').add({
+      owner: currentOwner, city, date, time, deposit, status: 'open', heldBy: null, heldAt: null,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => { showToast('Slot added'); loadGuestSpots(); })
+      .catch(() => showToast('Could not add slot'));
+  });
+
+  container.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const action = btn.dataset.action;
+      if(action === 'delete'){
+        if(!confirm('Delete this slot? This cannot be undone.')) return;
+        db.collection('guestSlots').doc(id).delete().then(() => { showToast('Slot deleted'); loadGuestSpots(); });
+      } else if(action === 'release'){
+        db.collection('guestSlots').doc(id).update({ status: 'open', heldBy: null, heldAt: null })
+          .then(() => { showToast('Slot released'); loadGuestSpots(); });
+      } else if(action === 'confirm'){
+        db.collection('guestSlots').doc(id).update({ status: 'confirmed' })
+          .then(() => { showToast('Marked as paid'); loadGuestSpots(); });
+      }
+    });
+  });
+}
+
 /* ===================== Settings ===================== */
 function renderSettings(){
   const container = document.getElementById('settingsContent');
@@ -1596,11 +1788,13 @@ function renderSettings(){
 /* ===================== Tabs ===================== */
 function switchTab(name){
   document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  ['requests','add','calendar','accounting','settings'].forEach(t => {
+  ['requests','add','calendar','accounting','consents','guestspots','settings'].forEach(t => {
     document.getElementById('tab-' + t).style.display = (t === name) ? 'block' : 'none';
   });
   if(name === 'accounting') renderAccounting();
   if(name === 'settings') renderSettings();
+  if(name === 'consents') loadConsents();
+  if(name === 'guestspots') loadGuestSpots();
 }
 document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
